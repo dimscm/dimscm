@@ -1,13 +1,12 @@
 /* Dashboard Insentif AFPS & RFPM — Departemen Promotion M3
-   Data: data/dashboard.json (hasil konversi SWS mingguan) + config/scheme.json */
+   Data: data/dashboard.json (hasil konversi SWS) atau file SWS .xlsx yang diunggah langsung. */
 
 'use strict';
 
 const S = {
   cfg: null, data: null,
   kuartal: '', region: '', afps: '', sumber: '', cari: '',
-  tab: 'ringkasan', limit: 200,
-  sort: { afps: null, rfpm: null, detail: null, catatan: null },
+  view: 'insentif', limit: 200, sort: {},
 };
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -16,12 +15,10 @@ const NF = new Intl.NumberFormat('id-ID');
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const int = (v) => NF.format(Math.round(v || 0));
 const pct = (v) => (v * 100).toFixed(0) + '%';
+const BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 
-function rp(v) {
-  if (v == null || v === '') return '—';
-  return 'Rp ' + NF.format(Math.round(v));
-}
-function rpShort(v) {
+const rp = (v) => (v == null || v === '' ? '—' : 'Rp ' + NF.format(Math.round(v)));
+function rpPendek(v) {
   if (!v) return 'Rp 0';
   if (v >= 1e9) return 'Rp ' + (v / 1e9).toFixed(v % 1e9 ? 1 : 0).replace('.', ',') + ' M';
   if (v >= 1e6) return 'Rp ' + (v / 1e6).toFixed(v % 1e6 ? 1 : 0).replace('.', ',') + ' jt';
@@ -31,61 +28,304 @@ function rpShort(v) {
 function tanggal(iso) {
   if (!iso) return '—';
   const [y, m, d] = iso.split('-');
-  const bulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
-  return `${+d} ${bulan[+m - 1]} ${y}`;
+  return `${+d} ${BULAN[+m - 1]} ${y}`;
 }
 
-/* ---------------------------------------------------------------- muat data */
+/* ================================================================ pembacaan SWS (.xlsx) di browser
+   Port dari scripts/convert_sws.py — hasilnya berbentuk sama persis. */
+
+const TAHUN_VALID = [2025, 2026];
+
+function teks(v) {
+  if (v == null) return '';
+  const s = String(v).replace(/\s+/g, ' ').trim();
+  const l = s.toLowerCase();
+  return (l === 'none' || s === '-' || l === '#n/a' || l === 'n/a') ? '' : s;
+}
+const UP = (v) => teks(v).toUpperCase();
+
+const BULAN_ID = {
+  jan: 1, feb: 2, peb: 2, mar: 3, mrt: 3, apr: 4, mei: 5, may: 5,
+  jun: 6, jul: 7, agu: 8, ags: 8, agt: 8, aug: 8, sep: 9, okt: 10,
+  oct: 10, nov: 11, nop: 11, des: 12, dec: 12,
+};
+const tahunPenuh = (y) => (+y < 100 ? +y + 2000 : +y);
+
+/** Tanggal dari sel SWS: objek Date, serial Excel, atau teks (termasuk nama bulan Indonesia).
+    Aturannya dibuat sama persis dengan scripts/convert_sws.py. */
+function keTanggal(v) {
+  if (v instanceof Date && !isNaN(v)) return new Date(Date.UTC(v.getFullYear(), v.getMonth(), v.getDate()));
+  if (typeof v === 'number' && isFinite(v)) {
+    return (v >= 20000 && v <= 80000) ? new Date(Math.round((v - 25569) * 86400000)) : null;
+  }
+  const s = teks(v);
+  if (!s) return null;
+  let d, bl, y, m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) { y = +m[1]; bl = +m[2]; d = +m[3]; }
+  else if ((m = s.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2,4})/))) { d = +m[1]; bl = +m[2]; y = tahunPenuh(m[3]); }
+  else if ((m = s.match(/^(\d{1,2})[-/. ]([A-Za-z]{3,12})[-/. ](\d{2,4})/))) {
+    bl = BULAN_ID[m[2].slice(0, 3).toLowerCase()];
+    if (!bl) return null;
+    d = +m[1]; y = tahunPenuh(m[3]);
+  } else return null;
+  if (bl < 1 || bl > 12 || d < 1 || d > 31) return null;
+  const t = new Date(Date.UTC(y, bl - 1, d));
+  return (t.getUTCMonth() === bl - 1 && t.getUTCDate() === d) ? t : null;
+}
+const keIso = (d) => (d ? `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}` : null);
+const tahunDari = (d) => (d ? d.getUTCFullYear() : null);
+const kuartalDari = (d) => (d ? `${d.getUTCFullYear()}-Q${Math.floor(d.getUTCMonth() / 3) + 1}` : null);
+
+function mingguIso(d) {
+  if (!d) return null;
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+  const awal = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  return Math.ceil(((t - awal) / 86400000 + 1) / 7);
+}
+function keAngka(v) {
+  if (typeof v === 'number' && isFinite(v)) return Math.round(v * 100) / 100;
+  const s = teks(v).replace(/Rp/gi, '').replace(/\./g, '').replace(/,/g, '.').replace(/\s/g, '');
+  const n = parseFloat(s);
+  return isFinite(n) ? Math.round(n * 100) / 100 : null;
+}
+const keBulat = (v) => { const n = keAngka(v); return n == null ? null : Math.round(n); };
+
+/** Pencari kolom berdasarkan nama header; tahan newline, spasi ganda, dan nama ganda. */
+function petaKolom(header) {
+  const peta = new Map();
+  header.forEach((h, i) => {
+    const k = UP(h);
+    if (k) { if (!peta.has(k)) peta.set(k, []); peta.get(k).push(i); }
+  });
+  return {
+    idx(nama, ke = 0) {
+      const k = UP(nama);
+      let c = peta.get(k);
+      if (!c) {
+        c = [];
+        peta.forEach((v, key) => { if (key.startsWith(k)) c.push(...v); });
+        c.sort((a, b) => a - b);
+      }
+      return c.length ? (c[ke] ?? c[c.length - 1]) : null;
+    },
+    get(row, nama, ke = 0) { const i = this.idx(nama, ke); return i == null ? null : row[i]; },
+  };
+}
+
+function bacaSheet(wb, nama) {
+  const ws = wb.Sheets[nama];
+  if (!ws) throw new Error(`Sheet "${nama}" tidak ada di file ini. Sheet tersedia: ${wb.SheetNames.join(', ')}`);
+  const baris = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: true });
+  let h = -1;
+  for (let i = 0; i < Math.min(12, baris.length); i++) {
+    if ((baris[i] || []).some((c) => UP(c) === 'NO OUTLET')) { h = i; break; }
+  }
+  if (h < 0) throw new Error(`Baris header (kolom "No Outlet") tidak ditemukan di sheet ${nama}.`);
+  const kol = petaKolom(baris[h]);
+  const data = baris.slice(h + 1).filter((r) => r && (teks(kol.get(r, 'No Outlet')) || teks(kol.get(r, 'NAMA OUTLET'))));
+  return { kol, data };
+}
+
+function rapikanGrfpm(v) {
+  const s = UP(v).replace('GRPFM', 'GRFPM');
+  const m = s.match(/(\d+)/);
+  return (m && s.includes('GRFPM')) ? `GRFPM ${parseInt(m[1], 10)}` : (s || '');
+}
+
+/** Susun dokumen data dari workbook SWS. */
+function dariWorkbook(wb, namaFile) {
+  const chToKpi = {};
+  Object.entries(S.cfg.channel_ke_kpi).forEach(([k, v]) => { chToKpi[UP(k)] = v; });
+  const ext = bacaSheet(wb, 'EXT');
+  const noo = bacaSheet(wb, 'NOO');
+  const deals = [], issues = [], mentah = [];
+
+  const catat = (sheet, r, kol, masalah, kolomOutlet) => {
+    masalah.forEach((m) => issues.push({
+      sheet, no_outlet: teks(kol.get(r, 'No Outlet')), outlet: teks(kol.get(r, kolomOutlet)),
+      afps: UP(kol.get(r, sheet === 'EXT' ? 'Nama AFPS' : 'NAMA AFPS')), region: UP(kol.get(r, 'REGION')), masalah: m,
+    }));
+  };
+
+  // ---- EXT: perpanjangan kontrak
+  for (const r of ext.data) {
+    const kol = ext.kol;
+    const afps = UP(kol.get(r, 'Nama AFPS')), region = UP(kol.get(r, 'REGION')), gr = rapikanGrfpm(kol.get(r, 'GRFPM'));
+    mentah.push([afps, region, gr]);
+    let status = UP(kol.get(r, 'DEAL/NO DEAL/ PROSES')) || 'BELUM DIVISIT';
+    if (status.startsWith('NO DEAL')) status = 'NO DEAL';
+    if (status !== 'DEAL') continue;
+
+    const channel = UP(kol.get(r, 'CHANNEL'));
+    const tgl = keTanggal(kol.get(r, 'TANGGAL DEAL'));
+    const apBaru = teks(kol.get(r, 'NOMOR AP', 1));
+    const masalah = [];
+    if (!tgl) masalah.push('Status DEAL tetapi TANGGAL DEAL kosong');
+    else if (!TAHUN_VALID.includes(tahunDari(tgl))) masalah.push('Tanggal deal di luar rentang wajar: ' + keIso(tgl));
+    if (!apBaru) masalah.push('Sudah DEAL tetapi nomor AP baru belum terisi');
+    catat('EXT', r, kol, masalah, 'NAMA OUTLET');
+    const valid = !!tgl && TAHUN_VALID.includes(tahunDari(tgl));
+
+    deals.push({
+      sumber: 'PERPANJANGAN', no_outlet: teks(kol.get(r, 'No Outlet')), outlet: teks(kol.get(r, 'NAMA OUTLET')),
+      grfpm: gr, region, kota: UP(kol.get(r, 'KOTA')), kecamatan: UP(kol.get(r, 'KECAMATAN')), afps,
+      jenis: UP(kol.get(r, 'JENIS OUTLET')), channel, kpi: chToKpi[channel] || 'lainnya', kategori: '',
+      brand: UP(kol.get(r, 'BRAND', 1)) || UP(kol.get(r, 'BRAND')),
+      kontrak: UP(kol.get(r, 'BB/BR/BL', 1)) || UP(kol.get(r, 'BB/BR/BL')),
+      takeover: UP(kol.get(r, 'TAKEOVER OR BUKAN TAKEOVER')), alamat: teks(kol.get(r, 'ALAMAT OUTLET')),
+      pic: teks(kol.get(r, 'NAMA PIC')), telp: teks(kol.get(r, 'NO TELP PIC')), kode_outlet: teks(kol.get(r, 'KODE OUTLET')),
+      ap: apBaru, ap_lama: teks(kol.get(r, 'NOMOR AP')),
+      tgl_visit: keIso(keTanggal(kol.get(r, 'TANGGAL VISIT'))), tgl_deal: keIso(tgl),
+      week_deal: keBulat(kol.get(r, 'WEEK DEAL')), week_iso: valid ? mingguIso(tgl) : null,
+      kuartal: valid ? kuartalDari(tgl) : null,
+      kontrak_habis: keIso(keTanggal(kol.get(r, 'TANGGAL BERAKHIR KONTRAK'))),
+      kontrak_mulai_baru: keIso(keTanggal(kol.get(r, 'TANGGAL START KONTRAK NEW'))),
+      kontrak_akhir_baru: keIso(keTanggal(kol.get(r, 'TANGGAL END KONTRAK NEW'))),
+      kompensasi: keAngka(kol.get(r, 'NILAI KOMPENSASI NEW IN RUPIAH')),
+      branding: keAngka(kol.get(r, 'NILAI BRANDING/ REVISUAL IN RUPIAH')),
+      nilai_total: keAngka(kol.get(r, 'TOTAL', 1)), omset_week: keAngka(kol.get(r, 'OMSET PER WEEK IN RUPIAH')),
+      ikat_target: UP(kol.get(r, 'ADA IKAT TARGET (V)')), valid,
+    });
+  }
+
+  // ---- NOO: sudah deal / sudah terbit AP
+  for (const r of noo.data) {
+    const kol = noo.kol;
+    const afps = UP(kol.get(r, 'NAMA AFPS')), region = UP(kol.get(r, 'REGION')), gr = rapikanGrfpm(kol.get(r, 'GRFPM'));
+    mentah.push([afps, region, gr]);
+    let status = UP(kol.get(r, 'DEAL/ PROSES')) || 'BELUM DIVISIT';
+    if (status.startsWith('NO DEAL')) status = 'NO DEAL';
+    const ap = teks(kol.get(r, 'NOMOR AP'));
+    if (status !== 'DEAL' && !ap) continue;
+
+    const channel = UP(kol.get(r, 'CHANNEL'));
+    const tgl = keTanggal(kol.get(r, 'TGL DEAL'));
+    const masalah = [];
+    if (status === 'DEAL' && !ap) masalah.push('Status DEAL tetapi nomor AP belum terisi (belum diakui sebagai NOO ber-AP)');
+    if (ap && status !== 'DEAL') masalah.push(`Sudah ada nomor AP tetapi status masih '${status || 'kosong'}'`);
+    if (!tgl) masalah.push('Sudah DEAL/ber-AP tetapi TGL DEAL kosong');
+    else if (!TAHUN_VALID.includes(tahunDari(tgl))) masalah.push('Tanggal deal di luar rentang wajar: ' + keIso(tgl));
+    catat('NOO', r, kol, masalah, 'NAMA OUTLET');
+    const adaTgl = !!tgl && TAHUN_VALID.includes(tahunDari(tgl));
+
+    deals.push({
+      sumber: 'NOO', no_outlet: teks(kol.get(r, 'No Outlet')), outlet: teks(kol.get(r, 'NAMA OUTLET')),
+      grfpm: gr, region, kota: UP(kol.get(r, 'KOTA')), kecamatan: UP(kol.get(r, 'KECAMATAN')), afps,
+      jenis: UP(kol.get(r, 'JENIS OUTLET')), channel, kpi: chToKpi[channel] || 'lainnya',
+      kategori: UP(kol.get(r, 'KATEGORI KPI')),
+      brand: UP(kol.get(r, 'BRAND', 1)) || UP(kol.get(r, 'BRAND')), kontrak: UP(kol.get(r, 'BB/BR/BL')),
+      takeover: UP(kol.get(r, 'TAKEOVER/BUKAN TAKEOVER')), alamat: teks(kol.get(r, 'ALAMAT OUTLET')),
+      pic: teks(kol.get(r, 'NAMA PIC')), telp: teks(kol.get(r, 'NO TELP PIC')), kode_outlet: teks(kol.get(r, 'KODE OUTLET')),
+      ap, spsd: teks(kol.get(r, 'NO SPSD')), prioritas: UP(kol.get(r, 'PRIORITAS/TIDAK PRIORITAS')),
+      rating: keAngka(kol.get(r, 'RATING GOOGLE')), skor: keAngka(kol.get(r, 'TOTAL SCORE')),
+      siswa: keBulat(kol.get(r, 'JUMLAH SISWA')),
+      tgl_visit: keIso(keTanggal(kol.get(r, 'TGL VISIT'))), tgl_deal: keIso(tgl),
+      week_deal: keBulat(kol.get(r, 'WEEK DEAL')), week_iso: adaTgl ? mingguIso(tgl) : null,
+      kuartal: adaTgl ? kuartalDari(tgl) : null,
+      kontrak_mulai_baru: keIso(keTanggal(kol.get(r, 'TANGGAL START KONTRAK BASED ON PKS'))),
+      kontrak_akhir_baru: keIso(keTanggal(kol.get(r, 'TANGGAL END KONTRAK BASED ON PKS'))),
+      kompensasi: keAngka(kol.get(r, 'NILAI KOMPENSASI NEW IN RUPIAH')),
+      branding: keAngka(kol.get(r, 'NILAI BRANDING/ REVISUAL IN RUPIAH')),
+      nilai_total: keAngka(kol.get(r, 'TOTAL')), omset_karton: keAngka(kol.get(r, 'OMSET PER WEEK IN KARTON')),
+      ikat_target: UP(kol.get(r, 'ADA IKAT TARGET (V)')), valid: !!ap && adaTgl,
+    });
+  }
+
+  // ---- pemetaan AFPS -> region (kemunculan terbanyak)
+  const hitung = {}, grf = {};
+  mentah.forEach(([a, reg, gr]) => {
+    if (!a) return;
+    hitung[a] = hitung[a] || {}; grf[a] = grf[a] || {};
+    if (reg) hitung[a][reg] = (hitung[a][reg] || 0) + 1;
+    if (gr) grf[a][gr] = (grf[a][gr] || 0) + 1;
+  });
+  const puncak = (o) => Object.entries(o || {}).sort((x, y) => y[1] - x[1])[0]?.[0] || '';
+  const petaAfps = {};
+  Object.keys(hitung).forEach((a) => { petaAfps[a] = { region: puncak(hitung[a]) || 'TANPA REGION', grfpm: puncak(grf[a]) }; });
+  deals.forEach((d) => {
+    const i = petaAfps[d.afps];
+    if (i) { d.region = i.region || d.region; d.grfpm = d.grfpm || i.grfpm; }
+  });
+
+  const perRegion = {};
+  Object.entries(petaAfps).forEach(([a, i]) => { (perRegion[i.region] = perRegion[i.region] || []).push(a); });
+  const mw = String(namaFile || '').match(/[_\-\s]?W(\d{1,2})/i);
+
+  return {
+    meta: {
+      week: mw ? parseInt(mw[1], 10) : null, file_sumber: namaFile || '(diunggah)',
+      dibuat: new Date().toISOString(),
+      grfpm: puncak(deals.reduce((o, d) => { if (d.grfpm) o[d.grfpm] = (o[d.grfpm] || 0) + 1; return o; }, {})),
+      ringkas: {
+        ext_total: ext.data.length, ext_deal: deals.filter((d) => d.sumber === 'PERPANJANGAN').length,
+        noo_total: noo.data.length, noo_deal_ap: deals.filter((d) => d.sumber === 'NOO').length,
+        jumlah_afps: Object.keys(petaAfps).length, jumlah_region: Object.keys(perRegion).length,
+      },
+    },
+    afps: Object.entries(petaAfps).map(([nama, i]) => ({ nama, region: i.region, grfpm: i.grfpm }))
+      .sort((a, b) => (a.region + a.nama).localeCompare(b.region + b.nama, 'id')),
+    region: Object.entries(perRegion).map(([nama, a]) => ({ nama, afps: a.sort(), jumlah_afps: a.length }))
+      .sort((a, b) => a.nama.localeCompare(b.nama, 'id')),
+    deals, issues,
+  };
+}
+
+/* ================================================================ pemuatan awal */
+
+function tertanam(id) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  try { return JSON.parse(el.textContent); } catch (e) { return null; }
+}
 
 async function muat() {
   try {
-    const [cfg, data] = await Promise.all([
-      fetch('config/scheme.json', { cache: 'no-cache' }).then((r) => r.json()),
-      fetch('data/dashboard.json', { cache: 'no-cache' }).then((r) => {
-        if (!r.ok) throw new Error('data/dashboard.json belum tersedia (status ' + r.status + ')');
-        return r.json();
-      }),
-    ]);
-    S.cfg = cfg; S.data = data;
-    S.kuartal = cfg.periode_aktif || '';
-    init();
+    S.cfg = tertanam('cfgTertanam') || await fetch('config/scheme.json', { cache: 'no-cache' }).then((r) => r.json());
+    S.data = tertanam('dataTertanam');
+    if (!S.data) {
+      const r = await fetch('data/dashboard.json', { cache: 'no-cache' });
+      if (!r.ok) throw new Error('data/dashboard.json belum tersedia (status ' + r.status + ')');
+      S.data = await r.json();
+    }
+    mulai();
   } catch (e) {
     $('#loading').classList.add('hidden');
     const g = $('#gagal');
     g.classList.remove('hidden');
-    g.innerHTML = `<strong>Data belum bisa dimuat.</strong> ${esc(e.message)}<br>
-      Unggah file SWS terbaru ke folder <code>data/raw/</code> agar GitHub Actions membuat <code>data/dashboard.json</code>.`;
+    g.innerHTML = `<h2>Data belum bisa dimuat</h2><p class="hint">${esc(e.message)}</p>
+      <p>Klik <strong>Ganti file SWS</strong> di kanan atas untuk membaca file SWS langsung dari komputer Anda.</p>`;
+    siapkanTombolFile();
   }
 }
 
-function init() {
+function mulai() {
   const { cfg, data } = S;
-  document.title = `${cfg.judul} — Promotion M3`;
   $('#judul').textContent = cfg.judul;
   $('#subjudul').textContent = cfg.subjudul || '';
-
-  const m = data.meta;
-  const dibuat = m.dibuat ? new Date(m.dibuat) : null;
-  $('#chips').innerHTML = [
-    m.week ? `Data SWS <strong>Minggu ${m.week}</strong>` : 'Data SWS',
-    m.grfpm ? `<strong>${esc(m.grfpm)}</strong>` : '',
-    `<strong>${int(m.ringkas.jumlah_afps)}</strong> AFPS · <strong>${int(m.ringkas.jumlah_region)}</strong> region`,
-    dibuat ? `Diperbarui <strong>${dibuat.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}</strong>` : '',
-  ].filter(Boolean).map((t) => `<span class="chip">${t}</span>`).join('');
+  $('#brand-sub').textContent = data.meta.grfpm || 'Promotion M3';
+  document.title = cfg.judul + ' — Promotion M3';
 
   const fk = $('#f-kuartal');
-  const adaKuartal = new Set(data.deals.map((d) => d.kuartal).filter(Boolean));
-  const daftar = cfg.kuartal.filter((q) => adaKuartal.has(q.id));
-  for (const q of daftar) fk.add(new Option(`${q.label} (${q.rentang})`, q.id));
-  fk.add(new Option('Semua kuartal (tanpa hitung insentif)', 'ALL'));
-  if (!daftar.some((q) => q.id === S.kuartal)) S.kuartal = daftar.length ? daftar[daftar.length - 1].id : 'ALL';
+  fk.innerHTML = '';
+  const ada = new Set(data.deals.map((d) => d.kuartal).filter(Boolean));
+  const daftar = cfg.kuartal.filter((q) => ada.has(q.id));
+  daftar.forEach((q) => fk.add(new Option(`${q.label} · ${q.rentang}`, q.id)));
+  fk.add(new Option('Semua kuartal', 'ALL'));
+  if (!daftar.some((q) => q.id === S.kuartal)) {
+    S.kuartal = daftar.some((q) => q.id === cfg.periode_aktif) ? cfg.periode_aktif
+      : (daftar.length ? daftar[daftar.length - 1].id : 'ALL');
+  }
   fk.value = S.kuartal;
 
-  for (const r of data.region) $('#f-region').add(new Option(r.nama, r.nama));
+  const fr = $('#f-region');
+  fr.innerHTML = '<option value="">Semua</option>';
+  data.region.forEach((r) => fr.add(new Option(r.nama, r.nama)));
+  fr.value = S.region;
   isiAfps();
 
   fk.onchange = () => { S.kuartal = fk.value; render(); };
-  $('#f-region').onchange = (e) => { S.region = e.target.value; S.afps = ''; isiAfps(); render(); };
+  fr.onchange = (e) => { S.region = e.target.value; S.afps = ''; isiAfps(); render(); };
   $('#f-afps').onchange = (e) => { S.afps = e.target.value; render(); };
   $('#f-sumber').onchange = (e) => { S.sumber = e.target.value; render(); };
   $('#f-cari').oninput = (e) => { S.cari = e.target.value.trim().toUpperCase(); S.limit = 200; render(); };
@@ -95,39 +335,69 @@ function init() {
     isiAfps(); render();
   };
   $('#lagi').onclick = () => { S.limit += 200; render(); };
-  $$('.tab').forEach((b) => { b.onclick = () => pilihTab(b.dataset.tab); });
-  $('#tema').onclick = temaToggle;
-  $$('[data-unduh]').forEach((b) => { b.onclick = () => unduh(b.dataset.unduh); });
+  $$('.navitem').forEach((b) => { b.onclick = () => pilihView(b.dataset.view); });
+  $$('[data-unduh]').forEach((b) => { b.onclick = () => unduhCsv(b.dataset.unduh); });
+  if (document.getElementById('dataTertanam')) {
+    $('#btn-html').classList.add('hidden');   // berkas mandiri tidak bisa membangun ulang dirinya
+  } else {
+    $('#btn-html').onclick = unduhHtml;
+  }
+  siapkanTombolFile();
 
   $('#loading').classList.add('hidden');
-  $('#app').classList.remove('hidden');
+  $('#gagal').classList.add('hidden');
+  $('#isi').classList.remove('hidden');
   render();
 }
 
 function isiAfps() {
   const sel = $('#f-afps');
-  sel.innerHTML = '<option value="">Semua AFPS</option>';
-  S.data.afps.filter((a) => !S.region || a.region === S.region)
-    .forEach((a) => sel.add(new Option(a.nama, a.nama)));
+  sel.innerHTML = '<option value="">Semua</option>';
+  S.data.afps.filter((a) => !S.region || a.region === S.region).forEach((a) => sel.add(new Option(a.nama, a.nama)));
   sel.value = S.afps;
 }
 
-function temaToggle() {
-  const el = document.documentElement;
-  const gelap = el.dataset.theme === 'dark'
-    || (el.dataset.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
-  el.dataset.theme = gelap ? 'light' : 'dark';
+function pilihView(v) {
+  S.view = v;
+  $$('.navitem').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
+  $$('main section').forEach((s) => s.classList.toggle('hidden', s.id !== 'v-' + v));
   render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-function pilihTab(t) {
-  S.tab = t;
-  $$('.tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
-  $$('main > section').forEach((s) => s.classList.toggle('hidden', s.id !== 'p-' + t));
-  render();
+/* ---------------------------------------------------------------- unggah file SWS */
+
+function siapkanTombolFile() {
+  const input = $('#file-sws'), btn = $('#btn-ganti');
+  if (typeof XLSX === 'undefined') {  // berkas HTML mandiri: pembaca .xlsx tidak ikut ditanam
+    btn.disabled = true;
+    btn.title = 'Hanya tersedia pada dashboard online, bukan pada berkas HTML hasil unduhan.';
+    return;
+  }
+  btn.onclick = () => input.click();
+  input.onchange = async () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const label = btn.textContent;
+    btn.disabled = true; btn.innerHTML = '<span class="spinner dark" style="border:2px solid rgba(0,0,0,.15);border-top-color:#161721"></span>Membaca…';
+    try {
+      if (typeof XLSX === 'undefined') throw new Error('Pustaka pembaca Excel belum termuat — periksa koneksi internet, lalu muat ulang halaman.');
+      if (!S.cfg) S.cfg = await fetch('config/scheme.json', { cache: 'no-cache' }).then((r) => r.json());
+      const buf = await f.arrayBuffer();
+      const wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
+      S.data = dariWorkbook(wb, f.name);
+      S.region = S.afps = S.sumber = ''; S.cari = ''; S.limit = 200; S.sort = {};
+      $('#f-cari').value = '';
+      mulai();
+    } catch (e) {
+      alert('Gagal membaca file: ' + e.message);
+    } finally {
+      btn.disabled = false; btn.textContent = label; input.value = '';
+    }
+  };
 }
 
-/* ---------------------------------------------------------------- seleksi & KPI */
+/* ---------------------------------------------------------------- seleksi & perhitungan */
 
 const kpiOtomatis = () => S.cfg.kpi.filter((k) => k.otomatis);
 const kpiById = (id) => S.cfg.kpi.find((k) => k.id === id);
@@ -148,7 +418,7 @@ function terpilih() {
   });
 }
 
-/** Tier yang dicapai: pakai ambang persentase, atau ambang jumlah outlet absolut. */
+/** Tier yang dicapai: ambang persentase, atau ambang jumlah outlet absolut. */
 function tierOf(tiers, ach, target) {
   for (const t of tiers || []) {
     if (t.min != null) { if (ach >= t.min) return t; }
@@ -157,272 +427,203 @@ function tierOf(tiers, ach, target) {
   return null;
 }
 
-/** Hitung capaian tiap KPI untuk satu pemilik (AFPS atau RFPM). */
+/** Capaian tiap KPI untuk satu pemilik (AFPS atau RFPM). */
 function capaian(deals, peran, jumlahAfps) {
-  const hitungInsentif = S.kuartal !== 'ALL';
-  const hasil = {};
-  let insentif = 0;
+  const hitung = S.kuartal !== 'ALL';
+  const hasil = { hitung, total: deals.length, insentif: 0 };
   for (const k of kpiOtomatis()) {
-    const cfgPeran = k[peran];
+    const c = k[peran];
     const ach = deals.filter((d) => d.kpi === k.id).length;
     let target = 0;
-    if (cfgPeran) {
+    if (c) {
       target = peran === 'afps'
-        ? (cfgPeran.target || 0) * (jumlahAfps || 1)              // target per AFPS x jumlah AFPS dalam lingkup
-        : (cfgPeran.target != null ? cfgPeran.target              // target tetap per RFPM
-          : (cfgPeran.target_per_afps || 0) * (jumlahAfps || 0)); // target per AFPS x jumlah AFPS di region
+        ? (c.target || 0) * (jumlahAfps || 1)
+        : (c.target != null ? c.target : (c.target_per_afps || 0) * (jumlahAfps || 0));
     }
-    const t = hitungInsentif && target > 0 ? tierOf(cfgPeran.tiers, ach, target) : null;
-    hasil[k.id] = { ach, target, tier: t, tiers: cfgPeran ? cfgPeran.tiers : [], insentif: t ? t.insentif : 0 };
-    insentif += t ? t.insentif : 0;
+    const t = hitung && target > 0 ? tierOf(c.tiers, ach, target) : null;
+    hasil[k.id] = { ach, target, tier: t, tiers: c ? c.tiers : [], insentif: t ? t.insentif : 0 };
+    hasil.insentif += t ? t.insentif : 0;
   }
-  hasil.lainnya = { ach: deals.filter((d) => d.kpi === 'lainnya').length, target: 0, tier: null, insentif: 0 };
-  hasil.total = deals.length;
-  hasil.insentif = insentif;
-  hasil.hitungInsentif = hitungInsentif;
+  hasil.lainnya = { ach: deals.filter((d) => d.kpi === 'lainnya').length, target: 0, tier: null, tiers: [] };
   return hasil;
 }
 
-/** Sel tabel KPI: titik warna tier + capaian/target. */
 function selKpi(c, hitung) {
-  const kelas = !hitung || !c.target ? 't0' : (!c.tier ? 't0'
-    : (c.tier === tierKe(c, 0) ? 't100' : (c.tier === tierKe(c, 1) ? 't85' : 't75')));
-  return `<span class="dot ${kelas}" title="${!hitung ? 'insentif tidak dihitung' : (c.tier ? c.tier.label : 'belum tercapai')}"></span>`
-    + `${int(c.ach)} <span class="muted">/ ${int(c.target)}</span>`;
-}
-function tierKe(c, i) { return c.tiers ? c.tiers[i] : null; }
-
-function legendaTier(sel) {
-  const el = $(sel);
-  if (!el) return;
-  el.innerHTML = S.kuartal === 'ALL'
-    ? '<span class="muted">Pilih satu kuartal untuk melihat tier dan estimasi insentif.</span>'
-    : ['<span><i class="dot t100"></i>≥100% target</span>', '<span><i class="dot t85"></i>≥85%</span>',
-       '<span><i class="dot t75"></i>≥75%</span>', '<span><i class="dot t0"></i>di bawah 75% — tanpa insentif</span>'].join('');
-  el.className = 'legend-tier';
-}
-
-function badgeTier(c) {
-  if (!c.hitung) return '<span class="badge t0">—</span>';
-  if (!c.tier) return '<span class="badge t0">Belum tercapai</span>';
   const i = (c.tiers || []).indexOf(c.tier);
-  return `<span class="badge ${['t100', 't85', 't75'][i] || 't0'}">${esc(c.tier.label)}</span>`;
+  const kelas = !hitung || !c.target || !c.tier ? 'd0' : (['d100', 'd85', 'd75'][i] || 'd0');
+  const judul = !hitung ? 'insentif tidak dihitung' : (c.tier ? c.tier.label : 'belum tercapai');
+  return `<span class="dot ${kelas}" title="${judul}"></span>${int(c.ach)} <span class="muted">/ ${int(c.target)}</span>`;
 }
-
-/* ---------------------------------------------------------------- render */
-
-function render() {
-  if (S.tab === 'ringkasan') renderRingkasan();
-  if (S.tab === 'afps') renderAfps();
-  if (S.tab === 'rfpm') renderRfpm();
-  if (S.tab === 'detail') renderDetail();
-  if (S.tab === 'skema') renderSkema();
-  if (S.tab === 'catatan') renderCatatan();
-  const m = S.data.meta;
-  $('#footer-meta').innerHTML = `Sumber: <strong>${esc(m.file_sumber)}</strong> — sheet EXT (${int(m.ringkas.ext_total)} baris kontrak, ${int(m.ringkas.ext_deal)} deal perpanjangan)
-    dan sheet NOO (${int(m.ringkas.noo_total)} baris target, ${int(m.ringkas.noo_deal_ap)} sudah deal/ber-AP).
-    ${esc(S.cfg.catatan_sumber || '')}`;
-}
-
 function labelKuartal() {
   if (S.kuartal === 'ALL') return 'semua kuartal';
   const q = S.cfg.kuartal.find((x) => x.id === S.kuartal);
   return q ? `${q.label} (${q.rentang})` : S.kuartal;
 }
 
-function renderRingkasan() {
-  const d = terpilih();
-  const perp = d.filter((x) => x.sumber === 'PERPANJANGAN');
-  const noo = d.filter((x) => x.sumber === 'NOO');
+/* ---------------------------------------------------------------- render */
 
-  const lingkup = S.afps ? [S.data.afps.find((a) => a.nama === S.afps)].filter(Boolean)
+function render() {
+  const m = S.data.meta, d = m.dibuat ? new Date(m.dibuat) : null;
+  $('#sidemeta').innerHTML = [
+    m.week ? `Data SWS <b>Minggu ${m.week}</b>` : 'Data SWS',
+    `<b>${int(m.ringkas.jumlah_afps)}</b> AFPS · <b>${int(m.ringkas.jumlah_region)}</b> region`,
+    d ? `Diperbarui<br><b>${d.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}</b>` : '',
+  ].filter(Boolean).join('<br>');
+  $('#footer-meta').innerHTML = `Sumber: <strong>${esc(m.file_sumber)}</strong> — sheet EXT ${int(m.ringkas.ext_total)} baris kontrak (${int(m.ringkas.ext_deal)} deal perpanjangan), sheet NOO ${int(m.ringkas.noo_total)} baris target (${int(m.ringkas.noo_deal_ap)} sudah deal/ber-AP). ${esc(S.cfg.catatan_sumber || '')}`;
+
+  if (S.view === 'insentif') renderInsentif();
+  if (S.view === 'detail') renderDetail();
+  if (S.view === 'skema') renderSkema();
+  if (S.view === 'catatan') renderCatatan();
+}
+
+function renderInsentif() {
+  const d = terpilih();
+  const perp = d.filter((x) => x.sumber === 'PERPANJANGAN').length;
+  const noo = d.length - perp;
+  const lingkup = S.afps ? S.data.afps.filter((a) => a.nama === S.afps)
     : S.data.afps.filter((a) => !S.region || a.region === S.region);
-  const totalInsentif = lingkup.reduce((s, a) => s + capaian(d.filter((x) => x.afps === a.nama), 'afps').insentif, 0);
-  const maksInsentif = kpiOtomatis().reduce((s, k) => s + (k.afps ? k.afps.tiers[0].insentif : 0), 0) * lingkup.length;
+  const perAfps = lingkup.map((a) => capaian(d.filter((x) => x.afps === a.nama), 'afps'));
+  const totalInsentif = perAfps.reduce((s, c) => s + c.insentif, 0);
+  const maks = kpiOtomatis().reduce((s, k) => s + k.afps.tiers[0].insentif, 0) * lingkup.length;
+  const c = capaian(d, 'afps', lingkup.length);
 
   $('#tiles').innerHTML = [
-    { k: 'Total outlet deal', v: int(d.length), d: labelKuartal() },
-    { k: 'Perpanjangan kontrak', v: int(perp.length), d: 'sheet EXT — status DEAL' },
-    { k: 'NOO menjadi AP', v: int(noo.length), d: 'sheet NOO — nomor AP terbit' },
+    { ic: '🏪', bg: 'bg-biru', num: int(d.length), lbl: 'Total outlet deal', sub: labelKuartal() },
+    { ic: '🔁', bg: 'bg-hijau', num: int(perp), lbl: 'Perpanjangan kontrak', sub: 'sheet EXT — status DEAL' },
+    { ic: '🆕', bg: 'bg-oranye', num: int(noo), lbl: 'NOO menjadi AP', sub: 'sheet NOO — nomor AP terbit' },
     {
-      k: 'Estimasi insentif AFPS',
-      v: S.kuartal === 'ALL' ? '—' : rpShort(totalInsentif),
-      d: S.kuartal === 'ALL' ? 'pilih satu kuartal untuk menghitung'
-        : `dari maksimum ${rpShort(maksInsentif)} · ${lingkup.length} AFPS`,
+      ic: '💰', bg: 'bg-ungu', num: S.kuartal === 'ALL' ? '—' : rpPendek(totalInsentif), lbl: 'Estimasi insentif AFPS',
+      sub: S.kuartal === 'ALL' ? 'pilih satu kuartal' : `dari maks ${rpPendek(maks)} · ${lingkup.length} AFPS`,
     },
-  ].map((t) => `<div class="tile"><div class="k">${t.k}</div><div class="v">${t.v}</div><div class="d">${esc(t.d)}</div></div>`).join('');
+  ].map((t) => `<div class="kpi-solid ${t.bg}"><div class="ic">${t.ic}</div>
+      <div class="num">${t.num}</div><div class="lbl">${esc(t.lbl)}</div><div class="sub2">${esc(t.sub)}</div></div>`).join('');
 
-  const jumlahAfps = lingkup.length;
-  const peran = 'afps';
-  const c = capaian(d, peran, jumlahAfps);
-  $('#kpi-hint').textContent = `Akumulasi ${S.afps || S.region || 'GRFPM 2'} — ${labelKuartal()}. `
-    + `Target agregat = target per AFPS × ${jumlahAfps} AFPS.`;
-
-  const perAfps = lingkup.map((a) => capaian(d.filter((x) => x.afps === a.nama), 'afps'));
+  $('#kpi-hint').textContent = `${S.afps || S.region || S.data.meta.grfpm || 'Semua'} — ${labelKuartal()}. Target agregat = target per AFPS × ${lingkup.length} AFPS.`;
   $('#kpi-cards').innerHTML = kpiOtomatis().map((k) => {
-    const ach = c[k.id].ach;
-    const target = c[k.id].target;
-    const tercapai = perAfps.filter((x) => x[k.id].tier).length;
+    const ach = c[k.id].ach, target = c[k.id].target;
     const p = target ? Math.min(ach / target, 1) : 0;
-    const warna = target && ach / target >= 1 ? 'var(--good)' : (target && ach / target >= 0.75 ? 'var(--s1)' : 'var(--s2)');
-    return `<div class="kpi">
-      <div class="name">${k.no}. ${esc(k.nama)}</div>
-      <div class="num">${int(ach)} <small>/ ${int(target)} outlet</small></div>
-      <div class="bar"><span style="width:${(p * 100).toFixed(1)}%;background:${warna}"></span></div>
-      <div class="meta"><span>${target ? pct(ach / target) : '—'} dari target</span>
-        <span>${c.hitungInsentif ? `<strong>${tercapai}</strong> dari ${lingkup.length} AFPS dapat insentif` : ''}</span></div>
-      <div class="kontrak">${esc(k.kontrak)}</div>
+    const dapat = perAfps.filter((x) => x[k.id].tier).length;
+    return `<div class="kpi-white">
+      <div class="nm">${k.no}. ${esc(k.nama)}</div>
+      <div class="val">${int(ach)} <small>/ ${int(target)} outlet</small></div>
+      <div class="bar"><span style="width:${(p * 100).toFixed(1)}%"></span></div>
+      <div class="ket"><span>${target ? pct(ach / target) : '—'} dari target</span>
+        <span>${c.hitung ? `<strong>${dapat}</strong>/${lingkup.length} AFPS dapat insentif` : ''}</span></div>
+      <div class="ket2">${esc(k.kontrak)}</div>
     </div>`;
   }).join('');
-
-  const lain = c.lainnya.ach;
   $('#kpi-note').innerHTML = S.kuartal === 'ALL'
-    ? 'Insentif tidak dihitung untuk "semua kuartal" karena target skema berlaku per 3 bulan. Pilih satu kuartal untuk melihat estimasi insentif.'
-    : `Perpanjangan dan NOO digabung per channel sesuai ketentuan skema (dealing NOO/Takeover mencakup outlet yang layak perpanjang dan sudah diperpanjang).
-       ${lain ? `<strong>${int(lain)}</strong> deal channel DTW/POI, Sport, dan Rest Area ditampilkan di tabel tetapi tidak masuk KPI Q3 2026.` : ''}`;
+    ? 'Insentif tidak dihitung untuk “semua kuartal” karena target skema berlaku per 3 bulan. Pilih satu kuartal untuk melihat estimasinya.'
+    : `Perpanjangan dan NOO digabung per channel sesuai ketentuan skema.${c.lainnya.ach ? ` <strong>${int(c.lainnya.ach)}</strong> deal channel DTW/POI, Sport, dan Rest Area ditampilkan tetapi tidak masuk KPI.` : ''}`;
+
+  // ---- tabel per AFPS
+  const rowsA = barisAfps(d);
+  $('#afps-hint').textContent = 'Target per AFPS: ' + kpiOtomatis().map((k) => `${k.nama_pendek} ${k.afps.target}`).join(' · ');
+  $('#afps-count').textContent = `${rowsA.length} AFPS`;
+  const kolsA = [
+    { k: 'nama', t: 'AFPS', teks: 1, v: (r) => esc(r.nama) },
+    { k: 'region', t: 'Region', teks: 1, v: (r) => esc(r.region) },
+    { k: 'perpanjangan', t: 'Perpanjangan', n: 1, v: (r) => int(r.perpanjangan) },
+    { k: 'noo', t: 'NOO ber-AP', n: 1, v: (r) => int(r.noo) },
+    ...kpiOtomatis().map((k) => ({ k: 'k' + k.id, t: k.nama_pendek, n: 1, s: (r) => r.c[k.id].ach, v: (r) => selKpi(r.c[k.id], r.c.hitung) })),
+    { k: 'lain', t: 'Luar KPI', n: 1, s: (r) => r.c.lainnya.ach, v: (r) => int(r.c.lainnya.ach) },
+    { k: 'insentif', t: 'Estimasi insentif', n: 1, s: (r) => r.c.insentif, v: (r) => (r.c.hitung ? `<strong>${rp(r.c.insentif)}</strong>` : '<span class="muted">—</span>') },
+  ];
+  const totA = {
+    nama: `TOTAL ${rowsA.length} AFPS`, region: '',
+    perpanjangan: rowsA.reduce((s, r) => s + r.perpanjangan, 0), noo: rowsA.reduce((s, r) => s + r.noo, 0),
+    c: {
+      hitung: c.hitung, insentif: rowsA.reduce((s, r) => s + r.c.insentif, 0),
+      lainnya: { ach: rowsA.reduce((s, r) => s + r.c.lainnya.ach, 0) },
+      ...Object.fromEntries(kpiOtomatis().map((k) => [k.id, {
+        ach: rowsA.reduce((s, r) => s + r.c[k.id].ach, 0), target: rowsA.reduce((s, r) => s + r.c[k.id].target, 0), tiers: [],
+      }])),
+    },
+  };
+  tabel($('#t-afps'), kolsA, urut(rowsA, 'afps'), 'afps', totA);
+  $('#legend-tier').innerHTML = S.kuartal === 'ALL' ? '<span class="muted">Pilih satu kuartal untuk melihat tier dan estimasi insentif.</span>'
+    : ['<span><i class="dot d100" style="border-radius:50%"></i>≥100%</span>', '<span><i class="dot d85" style="border-radius:50%"></i>≥85%</span>',
+       '<span><i class="dot d75" style="border-radius:50%"></i>≥75%</span>', '<span><i class="dot d0" style="border-radius:50%"></i>di bawah 75% — tanpa insentif</span>'].join('');
+
+  // ---- tabel per RFPM
+  const rowsR = barisRfpm(d);
+  $('#rfpm-hint').textContent = `Satu region = satu RFPM. Target Kuliner & Lokpen = 15 outlet × jumlah AFPS di region; Foodcourt = 5 outlet per RFPM. Periode: ${labelKuartal()}.`;
+  $('#rfpm-count').textContent = `${rowsR.length} region`;
+  tabel($('#t-rfpm'), [
+    { k: 'nama', t: 'RFPM / Region', teks: 1, v: (r) => esc(r.nama) },
+    { k: 'jumlah_afps', t: 'AFPS', n: 1, v: (r) => int(r.jumlah_afps) },
+    { k: 'perpanjangan', t: 'Perpanjangan', n: 1, v: (r) => int(r.perpanjangan) },
+    { k: 'noo', t: 'NOO ber-AP', n: 1, v: (r) => int(r.noo) },
+    ...kpiOtomatis().map((k) => ({ k: 'k' + k.id, t: k.nama_pendek, n: 1, s: (r) => r.c[k.id].ach, v: (r) => selKpi(r.c[k.id], r.c.hitung) })),
+    { k: 'insentif', t: 'Estimasi insentif', n: 1, s: (r) => r.c.insentif, v: (r) => (r.c.hitung ? `<strong>${rp(r.c.insentif)}</strong>` : '<span class="muted">—</span>') },
+  ], urut(rowsR, 'rfpm'), 'rfpm');
+
+  const manual = S.cfg.kpi.filter((k) => !k.otomatis);
+  const maksR = S.cfg.kpi.reduce((s, k) => s + (k.rfpm ? k.rfpm.tiers[0].insentif : 0), 0);
+  const otoR = kpiOtomatis().reduce((s, k) => s + (k.rfpm ? k.rfpm.tiers[0].insentif : 0), 0);
+  $('#rfpm-note').innerHTML = `Insentif RFPM maksimum menurut skema ${rpPendek(maksR)} per kuartal; yang dapat dihitung otomatis dari SWS ${rpPendek(otoR)}. `
+    + manual.map((k) => `<strong>${esc(k.nama)}</strong> — ${esc(k.keterangan)}`).join(' ');
 
   chartKuartal();
   chartMinggu(d);
-  chartRegion(d);
-  chartChannel(d);
 }
 
-/* ---------------------------------------------------------------- tabel per AFPS */
-
-function barisAfps() {
-  const d = terpilih();
+function barisAfps(d) {
   return S.data.afps
     .filter((a) => (!S.region || a.region === S.region) && (!S.afps || a.nama === S.afps))
     .map((a) => {
       const milik = d.filter((x) => x.afps === a.nama);
-      const c = capaian(milik, 'afps', 1);
       return {
         nama: a.nama, region: a.region,
         perpanjangan: milik.filter((x) => x.sumber === 'PERPANJANGAN').length,
         noo: milik.filter((x) => x.sumber === 'NOO').length,
-        c,
+        c: capaian(milik, 'afps', 1),
       };
     });
 }
-
-function renderAfps() {
-  const rows = barisAfps();
-  $('#afps-hint').textContent = `Target per AFPS untuk ${labelKuartal()}: `
-    + kpiOtomatis().map((k) => `${k.nama} ${k.afps.target}`).join(' · ');
-  $('#afps-count').textContent = `${rows.length} AFPS`;
-
-  const kols = [
-    { k: 'nama', t: 'AFPS', v: (r) => esc(r.nama) },
-    { k: 'region', t: 'Region', v: (r) => esc(r.region) },
-    { k: 'perpanjangan', t: 'Perpanjangan', n: 1, v: (r) => int(r.perpanjangan) },
-    { k: 'noo', t: 'NOO ber-AP', n: 1, v: (r) => int(r.noo) },
-  ];
-  for (const k of kpiOtomatis()) {
-    kols.push({ k: 'kpi_' + k.id, t: k.nama_pendek, n: 1, s: (r) => r.c[k.id].ach, v: (r) => selKpi(r.c[k.id], r.c.hitungInsentif) });
-  }
-  kols.push({ k: 'lainnya', t: 'Luar KPI', n: 1, s: (r) => r.c.lainnya.ach, v: (r) => int(r.c.lainnya.ach) });
-  kols.push({
-    k: 'insentif', t: 'Estimasi insentif', n: 1, s: (r) => r.c.insentif,
-    v: (r) => (r.c.hitungInsentif ? `<strong>${rp(r.c.insentif)}</strong>` : '<span class="muted">—</span>'),
+function barisRfpm(d) {
+  return S.data.region.filter((r) => !S.region || r.nama === S.region).map((r) => {
+    const milik = d.filter((x) => x.region === r.nama);
+    return {
+      nama: r.nama, jumlah_afps: r.jumlah_afps,
+      perpanjangan: milik.filter((x) => x.sumber === 'PERPANJANGAN').length,
+      noo: milik.filter((x) => x.sumber === 'NOO').length,
+      c: capaian(milik, 'rfpm', r.jumlah_afps),
+    };
   });
-
-  const total = {
-    nama: `TOTAL ${rows.length} AFPS`, region: '',
-    perpanjangan: rows.reduce((s, r) => s + r.perpanjangan, 0),
-    noo: rows.reduce((s, r) => s + r.noo, 0),
-    c: {
-      hitungInsentif: rows.length ? rows[0].c.hitungInsentif : false,
-      insentif: rows.reduce((s, r) => s + r.c.insentif, 0),
-      lainnya: { ach: rows.reduce((s, r) => s + r.c.lainnya.ach, 0) },
-      ...Object.fromEntries(kpiOtomatis().map((k) => [k.id, {
-        ach: rows.reduce((s, r) => s + r.c[k.id].ach, 0),
-        target: rows.reduce((s, r) => s + r.c[k.id].target, 0),
-      }])),
-    },
-  };
-  tabel($('#t-afps'), kols, urut(rows, 'afps'), 'afps', total);
-  legendaTier('#afps-legend');
 }
-
-/* ---------------------------------------------------------------- tabel per RFPM */
-
-function barisRfpm() {
-  const d = terpilih();
-  return S.data.region
-    .filter((r) => !S.region || r.nama === S.region)
-    .map((r) => {
-      const milik = d.filter((x) => x.region === r.nama);
-      return {
-        nama: r.nama, jumlah_afps: r.jumlah_afps,
-        perpanjangan: milik.filter((x) => x.sumber === 'PERPANJANGAN').length,
-        noo: milik.filter((x) => x.sumber === 'NOO').length,
-        c: capaian(milik, 'rfpm', r.jumlah_afps),
-      };
-    });
-}
-
-function renderRfpm() {
-  const rows = barisRfpm();
-  $('#rfpm-hint').textContent = `Satu region diperlakukan sebagai satu RFPM. Target Kuliner & Lokpen = 15 outlet × jumlah AFPS di region; Foodcourt = 5 outlet per RFPM. Periode: ${labelKuartal()}.`;
-  $('#rfpm-count').textContent = `${rows.length} region`;
-
-  const kols = [
-    { k: 'nama', t: 'RFPM / Region', v: (r) => esc(r.nama) },
-    { k: 'jumlah_afps', t: 'AFPS', n: 1, v: (r) => int(r.jumlah_afps) },
-    { k: 'perpanjangan', t: 'Perpanjangan', n: 1, v: (r) => int(r.perpanjangan) },
-    { k: 'noo', t: 'NOO ber-AP', n: 1, v: (r) => int(r.noo) },
-  ];
-  for (const k of kpiOtomatis()) {
-    kols.push({ k: 'kpi_' + k.id, t: k.nama_pendek, n: 1, s: (r) => r.c[k.id].ach, v: (r) => selKpi(r.c[k.id], r.c.hitungInsentif) });
-  }
-  kols.push({
-    k: 'insentif', t: 'Estimasi insentif', n: 1, s: (r) => r.c.insentif,
-    v: (r) => (r.c.hitungInsentif ? `<strong>${rp(r.c.insentif)}</strong>` : '<span class="muted">—</span>'),
-  });
-  tabel($('#t-rfpm'), kols, urut(rows, 'rfpm'), 'rfpm');
-  legendaTier('#rfpm-legend');
-
-  const manual = S.cfg.kpi.filter((k) => !k.otomatis);
-  const maks = S.cfg.kpi.reduce((s, k) => s + (k.rfpm ? k.rfpm.tiers[0].insentif : 0), 0);
-  const otomatisMaks = kpiOtomatis().reduce((s, k) => s + (k.rfpm ? k.rfpm.tiers[0].insentif : 0), 0);
-  $('#rfpm-note').innerHTML = `Insentif RFPM maksimum menurut skema adalah ${rpShort(maks)} per kuartal; yang dapat dihitung otomatis dari SWS hanya ${rpShort(otomatisMaks)}. `
-    + manual.map((k) => `<strong>${esc(k.nama)}</strong> — ${esc(k.keterangan)}`).join(' ');
-}
-
-/* ---------------------------------------------------------------- detail outlet */
 
 function kolomDetail() {
-  const sensitif = S.cfg.tampilkan_data_sensitif;
-  const kols = [
-    { k: 'sumber', t: 'Sumber', v: (r) => (r.sumber === 'NOO' ? 'NOO' : 'Perpanjangan') },
-    { k: 'outlet', t: 'Nama outlet', v: (r) => `<span title="${esc(r.outlet)}">${esc(r.outlet)}</span>`, cls: 'wrapcell' },
-    { k: 'afps', t: 'AFPS', v: (r) => esc(r.afps) },
-    { k: 'region', t: 'Region', v: (r) => esc(r.region) },
-    { k: 'kota', t: 'Kota', v: (r) => esc(r.kota) },
-    { k: 'channel', t: 'Channel', v: (r) => esc(r.channel) },
-    { k: 'jenis', t: 'Jenis outlet', v: (r) => esc(r.jenis) },
-    { k: 'kpi', t: 'KPI', v: (r) => esc((kpiById(r.kpi) || { nama_pendek: 'Luar KPI' }).nama_pendek) },
-    { k: 'brand', t: 'Brand', v: (r) => esc(r.brand) },
+  const s = S.cfg.tampilkan_data_sensitif;
+  const k = [
+    { k: 'sumber', t: 'Sumber', teks: 1, v: (r) => (r.sumber === 'NOO' ? 'NOO' : 'Perpanjangan') },
+    { k: 'outlet', t: 'Nama outlet', teks: 1, cls: 'potong', v: (r) => `<span title="${esc(r.outlet)}">${esc(r.outlet)}</span>` },
+    { k: 'afps', t: 'AFPS', teks: 1, v: (r) => esc(r.afps) },
+    { k: 'region', t: 'Region', teks: 1, v: (r) => esc(r.region) },
+    { k: 'kota', t: 'Kota', teks: 1, v: (r) => esc(r.kota) },
+    { k: 'channel', t: 'Channel', teks: 1, v: (r) => esc(r.channel) },
+    { k: 'jenis', t: 'Jenis outlet', teks: 1, v: (r) => esc(r.jenis) },
+    { k: 'kpi', t: 'KPI', teks: 1, v: (r) => esc((kpiById(r.kpi) || { nama_pendek: 'Luar KPI' }).nama_pendek) },
+    { k: 'brand', t: 'Brand', teks: 1, v: (r) => esc(r.brand) },
     { k: 'kontrak', t: 'BB/BR/BL', v: (r) => esc(r.kontrak) },
     { k: 'tgl_deal', t: 'Tgl deal', v: (r) => tanggal(r.tgl_deal) },
     { k: 'week_deal', t: 'Week', n: 1, v: (r) => (r.week_deal == null ? '—' : 'W' + r.week_deal) },
     { k: 'kuartal', t: 'Kuartal', v: (r) => esc(r.kuartal || '—') },
     { k: 'ap', t: 'Nomor AP', v: (r) => esc(r.ap || '—') },
     { k: 'kontrak_akhir_baru', t: 'Kontrak s/d', v: (r) => tanggal(r.kontrak_akhir_baru) },
-    { k: 'alamat', t: 'Alamat', v: (r) => `<span title="${esc(r.alamat)}">${esc(r.alamat)}</span>`, cls: 'wrapcell' },
-    { k: 'pic', t: 'PIC', v: (r) => esc(r.pic) },
+    { k: 'alamat', t: 'Alamat', teks: 1, cls: 'potong', v: (r) => `<span title="${esc(r.alamat)}">${esc(r.alamat)}</span>` },
+    { k: 'pic', t: 'PIC', teks: 1, v: (r) => esc(r.pic) },
   ];
-  if (sensitif) {
-    kols.push(
-      { k: 'telp', t: 'No. telp PIC', v: (r) => esc(r.telp || '—') },
-      { k: 'kompensasi', t: 'Kompensasi', n: 1, v: (r) => rp(r.kompensasi) },
-      { k: 'branding', t: 'Branding', n: 1, v: (r) => rp(r.branding) },
-      { k: 'nilai_total', t: 'Total kontrak', n: 1, v: (r) => rp(r.nilai_total) },
-      { k: 'omset', t: 'Omset/minggu', n: 1, s: (r) => r.omset_week || r.omset_karton || 0,
-        v: (r) => (r.omset_week != null ? rp(r.omset_week) : (r.omset_karton != null ? int(r.omset_karton) + ' krt' : '—')) },
-    );
-  }
-  return kols;
+  if (s) k.push(
+    { k: 'telp', t: 'No. telp PIC', v: (r) => esc(r.telp || '—') },
+    { k: 'kompensasi', t: 'Kompensasi', n: 1, v: (r) => rp(r.kompensasi) },
+    { k: 'branding', t: 'Branding', n: 1, v: (r) => rp(r.branding) },
+    { k: 'nilai_total', t: 'Total kontrak', n: 1, v: (r) => rp(r.nilai_total) },
+    { k: 'omset', t: 'Omset/minggu', n: 1, s: (r) => r.omset_week || r.omset_karton || 0,
+      v: (r) => (r.omset_week != null ? rp(r.omset_week) : (r.omset_karton != null ? int(r.omset_karton) + ' krt' : '—')) },
+  );
+  return k;
 }
 
 function renderDetail() {
@@ -433,64 +634,50 @@ function renderDetail() {
   tabel($('#t-detail'), kolomDetail(), tampil, 'detail');
 }
 
-/* ---------------------------------------------------------------- skema & catatan */
-
 function renderSkema() {
-  const baris = S.cfg.kpi.map((k) => {
-    const a = k.afps, r = k.rfpm;
-    // label tier hanya ditulis ulang bila ambangnya jumlah outlet (beda dari judul kolom persentase)
-    const tier = (c, i) => {
-      const t = c && c.tiers[i];
-      if (!t) return '<span class="muted">—</span>';
-      return t.min != null ? `${esc(t.label)} · ${rpShort(t.insentif)}` : rpShort(t.insentif);
-    };
-    return `<tr>
+  const tier = (c, i) => {
+    const t = c && c.tiers[i];
+    if (!t) return '<span class="muted">—</span>';
+    return t.min != null ? `${esc(t.label)} · ${rpPendek(t.insentif)}` : rpPendek(t.insentif);
+  };
+  const baris = S.cfg.kpi.map((k) => `<tr>
       <td class="num">${k.no}</td>
-      <td class="wrapcell"><strong>${esc(k.nama)}</strong><br><span class="muted">${esc(k.kontrak || '')}</span></td>
-      <td>${a ? int(a.target) + ' outlet' : '<span class="muted">—</span>'}</td>
-      <td>${r ? (r.target != null ? int(r.target) + ' outlet' : int(r.target_per_afps) + ' × jml AFPS') : '—'}</td>
-      <td>${tier(a, 0)}</td><td>${tier(a, 1)}</td><td>${tier(a, 2)}</td>
-      <td>${tier(r, 0)}</td><td>${tier(r, 1)}</td><td>${tier(r, 2)}</td>
-      <td class="wrapcell">${k.otomatis ? '<span class="badge t100">Dihitung otomatis</span>' : '<span class="badge t0">Manual</span>'}</td>
-    </tr>`;
-  }).join('');
-  const totAfps = kpiOtomatis().reduce((s, k) => s + k.afps.tiers[0].insentif, 0);
-  const totRfpm = S.cfg.kpi.reduce((s, k) => s + (k.rfpm ? k.rfpm.tiers[0].insentif : 0), 0);
-  $('#t-skema').innerHTML = `
-    <thead><tr>
+      <td class="teks"><strong>${esc(k.nama)}</strong><br><span class="muted" style="font-size:11px">${esc(k.kontrak || '')}</span></td>
+      <td>${k.afps ? int(k.afps.target) + ' outlet' : '<span class="muted">—</span>'}</td>
+      <td>${k.rfpm ? (k.rfpm.target != null ? int(k.rfpm.target) + ' outlet' : int(k.rfpm.target_per_afps) + ' × AFPS') : '—'}</td>
+      <td>${tier(k.afps, 0)}</td><td>${tier(k.afps, 1)}</td><td>${tier(k.afps, 2)}</td>
+      <td>${tier(k.rfpm, 0)}</td><td>${tier(k.rfpm, 1)}</td><td>${tier(k.rfpm, 2)}</td>
+      <td class="teks">${k.otomatis ? '<span class="pill p100">Otomatis</span>' : '<span class="pill p0">Manual</span>'}</td>
+    </tr>`).join('');
+  const totA = kpiOtomatis().reduce((s, k) => s + k.afps.tiers[0].insentif, 0);
+  const totR = S.cfg.kpi.reduce((s, k) => s + (k.rfpm ? k.rfpm.tiers[0].insentif : 0), 0);
+  $('#t-skema').innerHTML = `<thead><tr>
       <th class="nosort num">No</th><th class="nosort">Activity</th>
-      <th class="nosort">Target AFPS<br>/3 bulan</th><th class="nosort">Target RFPM<br>/3 bulan</th>
+      <th class="nosort">Target AFPS</th><th class="nosort">Target RFPM</th>
       <th class="nosort">AFPS ≥100%</th><th class="nosort">AFPS ≥85%</th><th class="nosort">AFPS ≥75%</th>
       <th class="nosort">RFPM ≥100%</th><th class="nosort">RFPM ≥85%</th><th class="nosort">RFPM ≥75%</th>
-      <th class="nosort">Status hitung</th>
-    </tr></thead><tbody>${baris}</tbody>
-    <tfoot><tr><td colspan="4">Maksimum per kuartal</td>
-      <td>${rpShort(totAfps)}</td><td colspan="2"></td><td>${rpShort(totRfpm)}</td><td colspan="3"></td></tr></tfoot>`;
-
+      <th class="nosort">Hitung</th></tr></thead>
+    <tbody>${baris}</tbody>
+    <tfoot><tr><td colspan="4" class="teks">Maksimum per kuartal</td><td>${rpPendek(totA)}</td><td colspan="2"></td><td>${rpPendek(totR)}</td><td colspan="3"></td></tr></tfoot>`;
   $('#skema-catatan').innerHTML = S.cfg.kpi.map((k) =>
-    `<div class="note ${k.otomatis ? 'info' : ''}"><strong>${k.no}. ${esc(k.nama)}</strong> — ${esc(k.keterangan)}</div>`).join('');
-
-  const peta = Object.entries(S.cfg.channel_ke_kpi).map(([ch, id]) => {
-    const k = kpiById(id);
-    const jml = S.data.deals.filter((d) => d.channel === ch).length;
-    return `<tr><td>${esc(ch)}</td><td>${esc(k ? k.nama : S.cfg.kpi_lainnya.nama)}</td><td class="num">${int(jml)}</td></tr>`;
-  }).join('');
-  $('#t-mapping').innerHTML = `
-    <thead><tr><th class="nosort">Channel di SWS</th><th class="nosort">Dihitung sebagai KPI</th><th class="nosort num">Jumlah deal (semua kuartal)</th></tr></thead>
-    <tbody>${peta}</tbody>`;
+    `<div class="note ${k.otomatis ? '' : 'warn'}"><strong>${k.no}. ${esc(k.nama)}</strong> — ${esc(k.keterangan)}</div>`).join('');
+  $('#t-mapping').innerHTML = `<thead><tr><th class="nosort">Channel di SWS</th><th class="nosort">Dihitung sebagai KPI</th><th class="nosort num">Jumlah deal (semua kuartal)</th></tr></thead><tbody>`
+    + Object.entries(S.cfg.channel_ke_kpi).map(([ch, id]) => {
+      const k = kpiById(id);
+      return `<tr><td class="teks">${esc(ch)}</td><td class="teks">${esc(k ? k.nama : S.cfg.kpi_lainnya.nama)}</td><td class="num">${int(S.data.deals.filter((d) => d.channel === ch).length)}</td></tr>`;
+    }).join('') + '</tbody>';
 }
 
 function renderCatatan() {
-  const rows = urut(S.data.issues.filter((i) =>
-    (!S.region || i.region === S.region) && (!S.afps || i.afps === S.afps)), 'catatan');
+  const rows = urut(S.data.issues.filter((i) => (!S.region || i.region === S.region) && (!S.afps || i.afps === S.afps)), 'catatan');
   $('#catatan-count').textContent = `${int(rows.length)} baris perlu diperiksa`;
   tabel($('#t-catatan'), [
     { k: 'sheet', t: 'Sheet', v: (r) => esc(r.sheet) },
     { k: 'no_outlet', t: 'No outlet', n: 1, v: (r) => esc(r.no_outlet) },
-    { k: 'outlet', t: 'Nama outlet', v: (r) => `<span title="${esc(r.outlet)}">${esc(r.outlet)}</span>`, cls: 'wrapcell' },
-    { k: 'afps', t: 'AFPS', v: (r) => esc(r.afps) },
-    { k: 'region', t: 'Region', v: (r) => esc(r.region) },
-    { k: 'masalah', t: 'Catatan', v: (r) => esc(r.masalah), cls: 'wrapcell' },
+    { k: 'outlet', t: 'Nama outlet', teks: 1, cls: 'potong', v: (r) => `<span title="${esc(r.outlet)}">${esc(r.outlet)}</span>` },
+    { k: 'afps', t: 'AFPS', teks: 1, v: (r) => esc(r.afps) },
+    { k: 'region', t: 'Region', teks: 1, v: (r) => esc(r.region) },
+    { k: 'masalah', t: 'Catatan', teks: 1, v: (r) => esc(r.masalah) },
   ], rows, 'catatan');
 }
 
@@ -499,8 +686,7 @@ function renderCatatan() {
 function urut(rows, key) {
   const s = S.sort[key];
   if (!s) return rows;
-  const kol = s.kol;
-  const nilai = (r) => (kol.s ? kol.s(r) : (r[kol.k] ?? ''));
+  const nilai = (r) => (s.kol.s ? s.kol.s(r) : (r[s.kol.k] ?? ''));
   return rows.slice().sort((a, b) => {
     const x = nilai(a), y = nilai(b);
     if (typeof x === 'number' && typeof y === 'number') return s.asc ? x - y : y - x;
@@ -511,13 +697,13 @@ function urut(rows, key) {
 function tabel(el, kols, rows, key, total) {
   const s = S.sort[key];
   const th = kols.map((k, i) => {
-    const aktif = s && s.kol.k === k.k ? (s.asc ? ' ▲' : ' ▼') : '';
-    return `<th data-i="${i}" class="${k.n ? 'num ' : ''}${k.nosort ? 'nosort' : ''}" ${k.nosort ? '' : 'title="Klik untuk mengurutkan"'}>${esc(k.t)}${aktif}</th>`;
+    const arah = s && s.kol.k === k.k ? (s.asc ? ' ▲' : ' ▼') : '';
+    return `<th data-i="${i}" class="${k.n ? 'num ' : ''}${k.nosort ? 'nosort' : ''}">${esc(k.t)}${arah}</th>`;
   }).join('');
   const body = rows.length
-    ? rows.map((r) => `<tr>${kols.map((k) => `<td class="${k.n ? 'num ' : ''}${k.cls || ''}">${k.v(r)}</td>`).join('')}</tr>`).join('')
-    : `<tr><td colspan="${kols.length}" class="muted" style="padding:24px;text-align:center">Tidak ada data untuk filter ini.</td></tr>`;
-  const foot = total ? `<tfoot><tr>${kols.map((k) => `<td class="${k.n ? 'num ' : ''}">${k.v(total)}</td>`).join('')}</tr></tfoot>` : '';
+    ? rows.map((r) => `<tr>${kols.map((k) => `<td class="${k.n ? 'num ' : ''}${k.teks ? 'teks ' : ''}${k.cls || ''}">${k.v(r)}</td>`).join('')}</tr>`).join('')
+    : `<tr><td colspan="${kols.length}" class="teks muted" style="padding:26px;text-align:center">Tidak ada data untuk filter ini.</td></tr>`;
+  const foot = total ? `<tfoot><tr>${kols.map((k) => `<td class="${k.n ? 'num ' : ''}${k.teks ? 'teks ' : ''}">${k.v(total)}</td>`).join('')}</tr></tfoot>` : '';
   el.innerHTML = `<thead><tr>${th}</tr></thead><tbody>${body}</tbody>${foot}`;
   $$('thead th:not(.nosort)', el).forEach((h) => {
     h.onclick = () => {
@@ -528,143 +714,159 @@ function tabel(el, kols, rows, key, total) {
   });
 }
 
-/* ---------------------------------------------------------------- unduh CSV */
+/* ---------------------------------------------------------------- unduhan */
 
-function unduh(jenis) {
-  let kols, rows, nama;
-  if (jenis === 'afps') { kols = null; rows = barisAfps(); nama = 'ringkasan-afps'; }
-  if (jenis === 'rfpm') { kols = null; rows = barisRfpm(); nama = 'ringkasan-rfpm'; }
-  if (jenis === 'detail') { kols = kolomDetail(); rows = terpilih(); nama = 'detail-outlet'; }
-  if (jenis === 'catatan') {
-    kols = [{ k: 'sheet', t: 'Sheet' }, { k: 'no_outlet', t: 'No outlet' }, { k: 'outlet', t: 'Outlet' },
-      { k: 'afps', t: 'AFPS' }, { k: 'region', t: 'Region' }, { k: 'masalah', t: 'Catatan' }];
-    rows = S.data.issues; nama = 'catatan-data';
-  }
-  let head, isi;
-  if (kols) {
-    head = kols.map((k) => k.t);
-    isi = rows.map((r) => kols.map((k) => r[k.k] ?? ''));
-  } else {
-    const ids = kpiOtomatis().map((k) => k.id);
+function unduhBerkas(isi, nama, tipe) {
+  const blob = new Blob([isi], { type: tipe });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = nama;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+
+function unduhCsv(jenis) {
+  let head, isi, nama;
+  const ids = kpiOtomatis().map((k) => k.id);
+  if (jenis === 'afps' || jenis === 'rfpm') {
+    const rows = jenis === 'afps' ? barisAfps(terpilih()) : barisRfpm(terpilih());
+    nama = 'ringkasan-' + jenis;
     head = ['Nama', jenis === 'rfpm' ? 'Jumlah AFPS' : 'Region', 'Perpanjangan', 'NOO ber-AP',
       ...ids.flatMap((id) => [kpiById(id).nama + ' (capaian)', kpiById(id).nama + ' (target)']), 'Estimasi insentif'];
     isi = rows.map((r) => [r.nama, jenis === 'rfpm' ? r.jumlah_afps : r.region, r.perpanjangan, r.noo,
       ...ids.flatMap((id) => [r.c[id].ach, r.c[id].target]), r.c.insentif]);
+  } else if (jenis === 'detail') {
+    const kols = kolomDetail();
+    nama = 'detail-outlet'; head = kols.map((k) => k.t);
+    isi = terpilih().map((r) => kols.map((k) => r[k.k] ?? ''));
+  } else {
+    nama = 'catatan-data';
+    head = ['Sheet', 'No outlet', 'Outlet', 'AFPS', 'Region', 'Catatan'];
+    isi = S.data.issues.map((r) => [r.sheet, r.no_outlet, r.outlet, r.afps, r.region, r.masalah]);
   }
-  const csv = [head, ...isi].map((baris) => baris.map((v) => {
-    const s = String(v ?? '');
-    return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  const csv = [head, ...isi].map((b) => b.map((v) => {
+    const t = String(v ?? '');
+    return /[";\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
   }).join(';')).join('\r\n');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `${nama}-${S.kuartal}-W${S.data.meta.week || 'x'}.csv`;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  unduhBerkas('﻿' + csv, `${nama}-${S.kuartal}-W${S.data.meta.week || 'x'}.csv`, 'text/csv;charset=utf-8');
 }
 
-/* ---------------------------------------------------------------- grafik (SVG) */
+/** Satu berkas HTML mandiri berisi data saat ini — untuk dibagikan/arsip. */
+async function unduhHtml() {
+  const btn = $('#btn-html'), label = btn.textContent;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Menyiapkan…';
+  try {
+    const ambil = (u) => fetch(u, { cache: 'no-cache' }).then((r) => {
+      if (!r.ok) throw new Error(u + ' tidak terbaca (' + r.status + ')');
+      return r.text();
+    });
+    const [html, css, js] = await Promise.all([
+      ambil(location.pathname.endsWith('/') ? location.pathname + 'index.html' : location.pathname),
+      ambil('assets/styles.css'), ambil('assets/app.js'),
+    ]);
+    // Pembaca .xlsx tidak ikut ditanam (≈900 KB); berkas unduhan tetap bisa dibaca,
+    // hanya tombol "Ganti file SWS" yang non-aktif di sana.
+    const aman = (t) => t.replace(/<\/script>/gi, '<\\/script>');
+    // Pengganti dibungkus fungsi: teks pengganti memuat pola $&, $` dan $$ milik
+    // String.replace yang kalau dibiarkan akan menyalin isi berkas dua kali.
+    const ganti = (teks, cari, isi) => teks.replace(cari, () => isi);
+    let out = ganti(html, '<link rel="stylesheet" href="assets/styles.css">', `<style>\n${css}\n</style>`);
+    out = ganti(out, '<script src="vendor/xlsx.full.min.js"></script>', '');
+    out = ganti(out, '<script src="assets/app.js"></script>',
+      `<script id="cfgTertanam" type="application/json">${aman(JSON.stringify(S.cfg))}</script>\n`
+      + `<script id="dataTertanam" type="application/json">${aman(JSON.stringify(S.data))}</script>\n`
+      + `<script>\n${aman(js)}\n</script>`);
+    unduhBerkas(out, `dashboard-insentif-W${S.data.meta.week || 'x'}.html`, 'text/html;charset=utf-8');
+  } catch (e) {
+    alert('Gagal menyiapkan berkas: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+}
 
-const TT = () => $('#tt');
+/* ---------------------------------------------------------------- grafik (SVG, tanpa pustaka) */
+
+const WARNA = { biru: '#0B5CAD', oranye: '#EB6834' };
 
 function pasangTooltip(root) {
+  const tt = $('#tt');
   $$('[data-tt]', root).forEach((el) => {
-    el.style.cursor = 'default';
     el.addEventListener('mousemove', (e) => {
-      const t = TT();
-      t.innerHTML = el.dataset.tt;
-      t.style.opacity = '1';
-      const r = t.getBoundingClientRect();
-      const x = Math.min(e.clientX + 14, innerWidth - r.width - 8);
-      const y = Math.max(8, e.clientY - r.height - 12);
-      t.style.left = x + 'px'; t.style.top = y + 'px';
+      tt.innerHTML = el.dataset.tt; tt.style.opacity = '1';
+      const r = tt.getBoundingClientRect();
+      tt.style.left = Math.min(e.clientX + 14, innerWidth - r.width - 8) + 'px';
+      tt.style.top = Math.max(8, e.clientY - r.height - 12) + 'px';
     });
-    el.addEventListener('mouseleave', () => { TT().style.opacity = '0'; });
+    el.addEventListener('mouseleave', () => { tt.style.opacity = '0'; });
   });
 }
+const kosong = (sel, teks) => { $(sel).innerHTML = `<p class="muted" style="padding:24px 0;text-align:center">${teks}</p>`; };
 
-function kosong(sel, teks) {
-  $(sel).innerHTML = `<p class="muted" style="padding:24px 0;text-align:center">${teks}</p>`;
-}
-
-/** Batang membulat 4px di ujung data, menempel pada baseline. */
 function batangV(x, y, w, h, r = 4) {
   const rr = Math.max(0, Math.min(r, h, w / 2));
   return `M${x},${y + h} L${x},${y + rr} Q${x},${y} ${x + rr},${y} L${x + w - rr},${y} Q${x + w},${y} ${x + w},${y + rr} L${x + w},${y + h} Z`;
-}
-function batangH(x, y, w, h, r = 4) {
-  const rr = Math.max(0, Math.min(r, w, h / 2));
-  return `M${x},${y} L${x + w - rr},${y} Q${x + w},${y} ${x + w},${y + rr} L${x + w},${y + h - rr} Q${x + w},${y + h} ${x + w - rr},${y + h} L${x},${y + h} Z`;
 }
 function skalaAtas(maks) {
   if (maks <= 0) return 1;
   const p = Math.pow(10, Math.floor(Math.log10(maks)));
   return Math.ceil(maks / (p / 2)) * (p / 2);
 }
+const seriAktif = (nama) => !S.sumber || (S.sumber === 'NOO' ? nama.startsWith('NOO') : nama.startsWith('Perpanjangan'));
 
-/** Deal per kuartal — batang berkelompok, dua seri. */
+/** Deal per kuartal — batang berkelompok, dua seri, berlabel langsung. */
 function chartKuartal() {
   const semua = S.data.deals.filter((d) => d.valid
-    && (!S.region || d.region === S.region) && (!S.afps || d.afps === S.afps)
-    && (!S.sumber || d.sumber === S.sumber)
+    && (!S.region || d.region === S.region) && (!S.afps || d.afps === S.afps) && (!S.sumber || d.sumber === S.sumber)
     && (!S.cari || `${d.outlet} ${d.afps} ${d.kota} ${d.ap}`.toUpperCase().includes(S.cari)));
-  const kuartals = S.cfg.kuartal.filter((q) => semua.some((d) => d.kuartal === q.id));
-  if (!kuartals.length) return kosong('#chart-kuartal', 'Belum ada deal dengan tanggal valid.');
+  const qs = S.cfg.kuartal.filter((q) => semua.some((d) => d.kuartal === q.id));
+  if (!qs.length) return kosong('#chart-kuartal', 'Belum ada deal dengan tanggal valid.');
 
   const seri = [
-    { nama: 'Perpanjangan', warna: 'var(--s1)', v: kuartals.map((q) => semua.filter((d) => d.kuartal === q.id && d.sumber === 'PERPANJANGAN').length) },
-    { nama: 'NOO ber-AP', warna: 'var(--s2)', v: kuartals.map((q) => semua.filter((d) => d.kuartal === q.id && d.sumber === 'NOO').length) },
-  ].filter((s) => !S.sumber || s.nama.startsWith(S.sumber === 'NOO' ? 'NOO' : 'Perpanjangan'));
+    { nama: 'Perpanjangan', warna: WARNA.biru, v: qs.map((q) => semua.filter((d) => d.kuartal === q.id && d.sumber === 'PERPANJANGAN').length) },
+    { nama: 'NOO ber-AP', warna: WARNA.oranye, v: qs.map((q) => semua.filter((d) => d.kuartal === q.id && d.sumber === 'NOO').length) },
+  ].filter((s) => seriAktif(s.nama));
 
-  const W = 640, H = 250, l = 40, r = 10, t = 26, b = 36;
-  const iw = W - l - r, ih = H - t - b;
+  const W = 620, H = 240, l = 38, r = 10, t = 26, b = 34, iw = W - l - r, ih = H - t - b;
   const maks = skalaAtas(Math.max(1, ...seri.flatMap((s) => s.v)));
-  const band = iw / kuartals.length;
-  const lebar = Math.min(46, (band - 16) / seri.length - 2);
+  const band = iw / qs.length, lebar = Math.min(44, (band - 16) / seri.length - 2);
 
   let g = '';
   for (let i = 0; i <= 4; i++) {
     const y = t + ih - (ih * i) / 4;
-    g += `<line x1="${l}" y1="${y}" x2="${W - r}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>
-          <text x="${l - 8}" y="${y + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${int((maks * i) / 4)}</text>`;
+    g += `<line x1="${l}" y1="${y}" x2="${W - r}" y2="${y}" stroke="rgba(22,23,33,.08)"/>
+          <text x="${l - 8}" y="${y + 4}" text-anchor="end" font-size="10.5" fill="#8C8DA0">${int((maks * i) / 4)}</text>`;
   }
-  kuartals.forEach((q, i) => {
+  qs.forEach((q, i) => {
     const x0 = l + band * i + (band - (lebar + 2) * seri.length) / 2;
     const aktif = q.id === S.kuartal;
-    g += `<text x="${l + band * i + band / 2}" y="${H - 14}" text-anchor="middle" font-size="12"
-           fill="${aktif ? 'var(--ink)' : 'var(--ink-2)'}" font-weight="${aktif ? 650 : 400}">${esc(q.label)}</text>`;
+    g += `<text x="${l + band * i + band / 2}" y="${H - 12}" text-anchor="middle" font-size="11.5"
+           fill="${aktif ? '#161721' : '#6C6D82'}" font-weight="${aktif ? 800 : 500}">${esc(q.label)}</text>`;
     seri.forEach((s, j) => {
-      const v = s.v[i];
-      const h = v > 0 ? Math.max((v / maks) * ih, 3) : 0;
-      const x = x0 + j * (lebar + 2);
-      const y = t + ih - h;
-      g += `<path d="${batangV(x, y, lebar, h)}" fill="${s.warna}"
-             data-tt="<b>${esc(q.label)} — ${esc(s.nama)}</b>${int(v)} outlet"/>`;
-      if (v > 0) g += `<text x="${x + lebar / 2}" y="${y - 6}" text-anchor="middle" font-size="11" fill="var(--ink-2)" font-variant-numeric="tabular-nums">${int(v)}</text>`;
+      const v = s.v[i], h = v > 0 ? Math.max((v / maks) * ih, 3) : 0;
+      const x = x0 + j * (lebar + 2), y = t + ih - h;
+      g += `<path d="${batangV(x, y, lebar, h)}" fill="${s.warna}" data-tt="<b>${esc(q.label)} — ${esc(s.nama)}</b>${int(v)} outlet"/>`;
+      if (v > 0) g += `<text x="${x + lebar / 2}" y="${y - 6}" text-anchor="middle" font-size="10.5" fill="#6C6D82">${int(v)}</text>`;
     });
   });
-  g += `<line x1="${l}" y1="${t + ih}" x2="${W - r}" y2="${t + ih}" stroke="var(--axis)" stroke-width="1"/>`;
-  $('#chart-kuartal').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Jumlah deal per kuartal">${g}</svg>`;
+  g += `<line x1="${l}" y1="${t + ih}" x2="${W - r}" y2="${t + ih}" stroke="rgba(22,23,33,.18)"/>`;
+  $('#chart-kuartal').innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Jumlah deal per kuartal">${g}</svg>`;
   pasangTooltip($('#chart-kuartal'));
 }
 
-/** Deal per minggu — garis 2px, dua seri, penanda titik pada hover. */
+/** Deal per minggu — garis 2px, dua seri, crosshair per minggu. */
 function chartMinggu(deals) {
-  const pakai = deals.filter((d) => (d.week_iso ?? d.week_deal) != null).map((d) => ({ ...d, w: d.week_iso ?? d.week_deal }));
   $('#figsub-minggu').textContent = `Minggu tanggal deal — ${labelKuartal()}`;
+  const pakai = deals.filter((d) => (d.week_iso ?? d.week_deal) != null).map((d) => ({ ...d, w: d.week_iso ?? d.week_deal }));
   if (!pakai.length) return kosong('#chart-minggu', 'Tidak ada data minggu deal pada filter ini.');
 
-  const wmin = Math.min(...pakai.map((d) => d.w));
-  const wmax = Math.max(...pakai.map((d) => d.w));
-  const weeks = [];
-  for (let w = wmin; w <= wmax; w++) weeks.push(w);
+  const wmin = Math.min(...pakai.map((d) => d.w)), wmax = Math.max(...pakai.map((d) => d.w));
+  const weeks = []; for (let w = wmin; w <= wmax; w++) weeks.push(w);
   const seri = [
-    { nama: 'Perpanjangan', warna: 'var(--s1)', v: weeks.map((w) => pakai.filter((d) => d.w === w && d.sumber === 'PERPANJANGAN').length) },
-    { nama: 'NOO ber-AP', warna: 'var(--s2)', v: weeks.map((w) => pakai.filter((d) => d.w === w && d.sumber === 'NOO').length) },
-  ].filter((s) => !S.sumber || s.nama.startsWith(S.sumber === 'NOO' ? 'NOO' : 'Perpanjangan'));
+    { nama: 'Perpanjangan', warna: WARNA.biru, v: weeks.map((w) => pakai.filter((d) => d.w === w && d.sumber === 'PERPANJANGAN').length) },
+    { nama: 'NOO ber-AP', warna: WARNA.oranye, v: weeks.map((w) => pakai.filter((d) => d.w === w && d.sumber === 'NOO').length) },
+  ].filter((s) => seriAktif(s.nama));
 
-  const W = 640, H = 250, l = 40, r = 12, t = 20, b = 34;
-  const iw = W - l - r, ih = H - t - b;
+  const W = 620, H = 240, l = 38, r = 12, t = 18, b = 32, iw = W - l - r, ih = H - t - b;
   const maks = skalaAtas(Math.max(1, ...seri.flatMap((s) => s.v)));
   const X = (i) => l + (weeks.length > 1 ? (iw * i) / (weeks.length - 1) : iw / 2);
   const Y = (v) => t + ih - (v / maks) * ih;
@@ -672,100 +874,26 @@ function chartMinggu(deals) {
   let g = '';
   for (let i = 0; i <= 4; i++) {
     const y = t + ih - (ih * i) / 4;
-    g += `<line x1="${l}" y1="${y}" x2="${W - r}" y2="${y}" stroke="var(--grid)"/>
-          <text x="${l - 8}" y="${y + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${int((maks * i) / 4)}</text>`;
+    g += `<line x1="${l}" y1="${y}" x2="${W - r}" y2="${y}" stroke="rgba(22,23,33,.08)"/>
+          <text x="${l - 8}" y="${y + 4}" text-anchor="end" font-size="10.5" fill="#8C8DA0">${int((maks * i) / 4)}</text>`;
   }
   const langkah = Math.max(1, Math.ceil(weeks.length / 12));
   weeks.forEach((w, i) => {
-    if (i % langkah === 0 || i === weeks.length - 1) {
-      g += `<text x="${X(i)}" y="${H - 12}" text-anchor="middle" font-size="11" fill="var(--muted)">W${w}</text>`;
-    }
+    if (i % langkah === 0 || i === weeks.length - 1) g += `<text x="${X(i)}" y="${H - 11}" text-anchor="middle" font-size="10.5" fill="#8C8DA0">W${w}</text>`;
   });
   seri.forEach((s) => {
-    const d = s.v.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
-    g += `<path d="${d}" fill="none" stroke="${s.warna}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-    if (weeks.length <= 20) {
-      s.v.forEach((v, i) => { g += `<circle cx="${X(i)}" cy="${Y(v)}" r="4" fill="${s.warna}" stroke="var(--surface)" stroke-width="2"/>`; });
-    }
+    g += `<path d="${s.v.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${s.warna}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (weeks.length <= 20) s.v.forEach((v, i) => { g += `<circle cx="${X(i)}" cy="${Y(v)}" r="4" fill="${s.warna}" stroke="#fff" stroke-width="2"/>`; });
   });
   weeks.forEach((w, i) => {
     const lebar = weeks.length > 1 ? iw / (weeks.length - 1) : iw;
-    const isi = seri.map((s) => `${s.nama}: <strong>${int(s.v[i])}</strong>`).join('<br>');
     g += `<rect x="${X(i) - lebar / 2}" y="${t}" width="${lebar}" height="${ih}" fill="transparent"
-           data-tt="<b>Minggu ${w}</b>${isi}"/>`;
+           data-tt="<b>Minggu ${w}</b>${seri.map((s) => `${s.nama}: <strong>${int(s.v[i])}</strong>`).join('<br>')}"/>`;
   });
-  g += `<line x1="${l}" y1="${t + ih}" x2="${W - r}" y2="${t + ih}" stroke="var(--axis)"/>`;
-  $('#chart-minggu').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Jumlah deal per minggu">${g}</svg>`;
+  g += `<line x1="${l}" y1="${t + ih}" x2="${W - r}" y2="${t + ih}" stroke="rgba(22,23,33,.18)"/>`;
+  $('#chart-minggu').innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Jumlah deal per minggu">${g}</svg>`;
   pasangTooltip($('#chart-minggu'));
 }
 
-/** Pencapaian KPI per region dengan penanda target. */
-function chartRegion(deals) {
-  const daftar = S.data.region.filter((r) => !S.region || r.nama === S.region);
-  if (!daftar.length) return kosong('#chart-region', 'Tidak ada region.');
-  const hitungTarget = S.kuartal !== 'ALL' && !S.afps;
-
-  const rows = daftar.map((r) => {
-    const milik = deals.filter((d) => d.region === r.nama && d.kpi !== 'lainnya');
-    const target = kpiOtomatis().reduce((s, k) => s + (k.rfpm.target != null ? k.rfpm.target : k.rfpm.target_per_afps * r.jumlah_afps), 0);
-    return { nama: r.nama, v: milik.length, target, afps: r.jumlah_afps };
-  }).sort((a, b) => b.v - a.v);
-
-  const barisTinggi = 30, W = 640, l = 168, r = 56, t = 8;
-  const H = t + rows.length * barisTinggi + 12;
-  const iw = W - l - r;
-  const maks = skalaAtas(Math.max(1, ...rows.map((x) => Math.max(x.v, hitungTarget ? x.target : 0))));
-
-  let g = '';
-  rows.forEach((row, i) => {
-    const y = t + i * barisTinggi;
-    const h = 16;
-    const w = (row.v / maks) * iw;
-    const capai = hitungTarget && row.target ? row.v / row.target : null;
-    const warna = capai == null ? 'var(--s1)' : (capai >= 1 ? 'var(--good)' : (capai >= 0.75 ? 'var(--s1)' : 'var(--s2)'));
-    g += `<text x="${l - 10}" y="${y + h - 2}" text-anchor="end" font-size="12" fill="var(--ink-2)">${esc(row.nama)}</text>`;
-    if (hitungTarget && row.target) {
-      g += `<path d="${batangH(l, y + 2, (row.target / maks) * iw, h)}" fill="var(--grid)"/>`;
-    }
-    g += `<path d="${batangH(l, y + 2, Math.max(w, 1), h)}" fill="${warna}"
-           data-tt="<b>${esc(row.nama)}</b>${int(row.v)} outlet KPI${hitungTarget ? ` dari target ${int(row.target)} (${pct(row.v / row.target)})` : ''}<br>${row.afps} AFPS"/>`;
-    g += `<text x="${l + Math.max(w, 1) + 8}" y="${y + h - 2}" font-size="12" fill="var(--ink)" font-variant-numeric="tabular-nums">${int(row.v)}</text>`;
-    if (hitungTarget && row.target) {
-      const xt = l + (row.target / maks) * iw;
-      g += `<line x1="${xt}" y1="${y}" x2="${xt}" y2="${y + h + 4}" stroke="var(--ink-2)" stroke-width="2"
-             data-tt="<b>Target ${esc(row.nama)}</b>${int(row.target)} outlet"/>`;
-    }
-  });
-  $('#chart-region').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Pencapaian KPI per region">${g}</svg>`
-    + (hitungTarget ? '<div class="legend"><span><i style="background:var(--good)"></i>≥100% target</span><span><i style="background:var(--s1)"></i>75–99%</span><span><i style="background:var(--s2)"></i>&lt;75%</span><span><i style="background:var(--grid)"></i>sisa menuju target</span></div>' : '');
-  pasangTooltip($('#chart-region'));
-}
-
-/** Sebaran channel — batang horizontal satu seri, berlabel langsung. */
-function chartChannel(deals) {
-  const hitung = {};
-  deals.forEach((d) => { hitung[d.channel || 'TANPA CHANNEL'] = (hitung[d.channel || 'TANPA CHANNEL'] || 0) + 1; });
-  const rows = Object.entries(hitung).map(([k, v]) => ({ nama: k, v })).sort((a, b) => b.v - a.v);
-  if (!rows.length) return kosong('#chart-channel', 'Tidak ada data pada filter ini.');
-
-  const barisTinggi = 28, W = 640, l = 150, r = 60, t = 6;
-  const H = t + rows.length * barisTinggi + 8;
-  const iw = W - l - r;
-  const maks = Math.max(...rows.map((x) => x.v));
-  const total = rows.reduce((s, x) => s + x.v, 0);
-
-  let g = '';
-  rows.forEach((row, i) => {
-    const y = t + i * barisTinggi, h = 16;
-    const w = Math.max((row.v / maks) * iw, 1);
-    const k = kpiById(S.cfg.channel_ke_kpi[row.nama]);
-    g += `<text x="${l - 10}" y="${y + h - 2}" text-anchor="end" font-size="12" fill="var(--ink-2)">${esc(row.nama)}</text>
-          <path d="${batangH(l, y + 2, w, h)}" fill="var(--s1)"
-            data-tt="<b>${esc(row.nama)}</b>${int(row.v)} outlet (${pct(row.v / total)})<br>KPI: ${esc(k ? k.nama : 'di luar KPI Q3')}"/>
-          <text x="${l + w + 8}" y="${y + h - 2}" font-size="12" fill="var(--ink)" font-variant-numeric="tabular-nums">${int(row.v)} <tspan fill="var(--muted)">${pct(row.v / total)}</tspan></text>`;
-  });
-  $('#chart-channel').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Sebaran channel outlet">${g}</svg>`;
-  pasangTooltip($('#chart-channel'));
-}
-
+/* Jalankan setelah seluruh definisi siap (data tertanam dimuat tanpa await). */
 muat();

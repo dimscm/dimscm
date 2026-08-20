@@ -40,21 +40,50 @@ def upper(v) -> str:
     return norm(v).upper()
 
 
+BULAN_ID = {
+    "jan": 1, "feb": 2, "peb": 2, "mar": 3, "mrt": 3, "apr": 4, "mei": 5, "may": 5,
+    "jun": 6, "jul": 7, "agu": 8, "ags": 8, "agt": 8, "aug": 8, "sep": 9, "okt": 10,
+    "oct": 10, "nov": 11, "nop": 11, "des": 12, "dec": 12,
+}
+
+
+def _tahun(y):
+    y = int(y)
+    return y + 2000 if y < 100 else y
+
+
 def as_date(v):
-    """Kembalikan objek date dari sel tanggal (datetime atau teks)."""
+    """Tanggal dari sel SWS: objek tanggal, serial Excel, atau teks (termasuk nama bulan Indonesia)."""
     if isinstance(v, dt.datetime):
         return v.date()
     if isinstance(v, dt.date):
         return v
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if 20000 <= v <= 80000:  # serial Excel (basis 1899-12-30)
+            return dt.date(1899, 12, 30) + dt.timedelta(days=int(v))
+        return None
     s = norm(v)
     if not s:
         return None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d %B %Y"):
-        try:
-            return dt.datetime.strptime(s, fmt).date()
-        except ValueError:
-            continue
-    return None
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if m:
+        y, bl, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = re.match(r"^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2,4})", s)
+        if m:  # urutan Indonesia: hari-bulan-tahun
+            d, bl, y = int(m.group(1)), int(m.group(2)), _tahun(m.group(3))
+        else:
+            m = re.match(r"^(\d{1,2})[-/. ]([A-Za-z]{3,12})[-/. ](\d{2,4})", s)
+            if not m:
+                return None
+            bl = BULAN_ID.get(m.group(2)[:3].lower())
+            if not bl:
+                return None
+            d, y = int(m.group(1)), _tahun(m.group(3))
+    try:
+        return dt.date(y, bl, d)
+    except ValueError:
+        return None
 
 
 def iso(d):
@@ -164,7 +193,7 @@ def rapikan_grfpm(v):
 
 def parse_ext(kol, data, channel_ke_kpi):
     """Perpanjangan kontrak: baris EXT dengan status DEAL."""
-    deals, pipeline, issues, mentah = [], Counter(), [], []
+    deals, issues, mentah = [], [], []
     for r in data:
         afps = upper(kol.get(r, "Nama AFPS"))
         region = upper(kol.get(r, "REGION"))
@@ -175,7 +204,6 @@ def parse_ext(kol, data, channel_ke_kpi):
         if status.startswith("NO DEAL"):
             status = "NO DEAL"
         channel = upper(kol.get(r, "CHANNEL"))
-        pipeline[(afps, region, "PERPANJANGAN", channel, status)] += 1
         if status != "DEAL":
             continue
 
@@ -232,12 +260,12 @@ def parse_ext(kol, data, channel_ke_kpi):
             "ikat_target": upper(kol.get(r, "ADA IKAT TARGET (V)")),
             "valid": valid,
         })
-    return deals, pipeline, issues, mentah
+    return deals, issues, mentah
 
 
 def parse_noo(kol, data, channel_ke_kpi):
     """NOO: baris dengan status DEAL dan/atau sudah terbit nomor AP."""
-    deals, pipeline, issues, mentah = [], Counter(), [], []
+    deals, issues, mentah = [], [], []
     for r in data:
         afps = upper(kol.get(r, "NAMA AFPS"))
         region = upper(kol.get(r, "REGION"))
@@ -248,8 +276,6 @@ def parse_noo(kol, data, channel_ke_kpi):
         if status.startswith("NO DEAL"):
             status = "NO DEAL"
         channel = upper(kol.get(r, "CHANNEL"))
-        pipeline[(afps, region, "NOO", channel, status)] += 1
-
         ap = norm(kol.get(r, "NOMOR AP"))
         if status != "DEAL" and not ap:
             continue
@@ -311,7 +337,7 @@ def parse_noo(kol, data, channel_ke_kpi):
             "ikat_target": upper(kol.get(r, "ADA IKAT TARGET (V)")),
             "valid": valid,
         })
-    return deals, pipeline, issues, mentah
+    return deals, issues, mentah
 
 
 # ---------------------------------------------------------------- main
@@ -347,8 +373,8 @@ def main():
     kol_noo, data_noo = baca_sheet(wb, "NOO")
     print(f"  EXT: {len(data_ext)} baris | NOO: {len(data_noo)} baris", flush=True)
 
-    deals_ext, pipe_ext, iss_ext, mentah_ext = parse_ext(kol_ext, data_ext, channel_ke_kpi)
-    deals_noo, pipe_noo, iss_noo, mentah_noo = parse_noo(kol_noo, data_noo, channel_ke_kpi)
+    deals_ext, iss_ext, mentah_ext = parse_ext(kol_ext, data_ext, channel_ke_kpi)
+    deals_noo, iss_noo, mentah_noo = parse_noo(kol_noo, data_noo, channel_ke_kpi)
 
     peta_afps = region_per_afps(mentah_ext + mentah_noo)
     deals = deals_ext + deals_noo
@@ -357,10 +383,6 @@ def main():
         if info:
             d["region"] = info["region"] or d["region"]
             d["grfpm"] = d["grfpm"] or info["grfpm"]
-
-    pipeline = Counter()
-    pipeline.update(pipe_ext)
-    pipeline.update(pipe_noo)
 
     per_region = defaultdict(set)
     for afps, info in peta_afps.items():
@@ -390,10 +412,6 @@ def main():
             key=lambda x: x["nama"],
         ),
         "deals": deals,
-        "pipeline": [
-            {"afps": k[0], "region": k[1], "sumber": k[2], "channel": k[3], "status": k[4], "jml": v}
-            for k, v in sorted(pipeline.items())
-        ],
         "issues": iss_ext + iss_noo,
     }
 
