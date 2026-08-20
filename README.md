@@ -8,31 +8,46 @@ Halaman ini dapat diakses publik lewat tautan — tidak perlu login, tidak perlu
 
 ---
 
-## 1. Memperbarui data setiap minggu
+## 1. Mengaktifkan tautan publik (sekali saja)
+
+**Settings → Pages → Build and deployment → Source: _Deploy from a branch_ →
+Branch: `claude/web-dashboard-insentif-publik-2zp9so` (atau branch default yang dipakai) → folder `/ (root)` → Save.**
+
+Sekitar satu menit kemudian dashboard hidup di:
+
+```
+https://dimscm.github.io/dimscm/
+```
+
+Halaman langsung memakai `data/dashboard.json` yang sudah ada di repositori, jadi tautan ini
+berfungsi walau GitHub Actions sedang tidak aktif.
+
+## 2. Memperbarui data setiap minggu
 
 1. Buka folder [`data/raw/`](data/raw) di repositori ini.
-2. Klik **Add file → Upload files**, unggah file SWS terbaru (mis. `SWS_W34__G2.xlsx`), lalu **Commit changes**.
-3. GitHub Actions otomatis:
-   - memilih file dengan nomor minggu (`W..`) terbesar di `data/raw/`,
-   - menjalankan `scripts/convert_sws.py` → menghasilkan `data/dashboard.json`,
-   - menerbitkan ulang halaman ke GitHub Pages (± 2–3 menit).
-4. Muat ulang dashboard. Stempel **Minggu** dan **Diperbarui** di bagian atas berubah bila berhasil.
+2. Klik **Add file → Upload files**, unggah file SWS terbaru (mis. `SWS_W34__G2.xlsx`),
+   hapus file minggu sebelumnya, lalu **Commit changes**.
+3. GitHub Actions (`.github/workflows/dashboard.yml`) memilih file dengan nomor minggu terbesar,
+   menjalankan `scripts/convert_sws.py`, dan meng-commit `data/dashboard.json` yang baru.
+4. GitHub Pages otomatis menerbitkan ulang halaman. Muat ulang dashboard — stempel **Minggu**
+   dan **Diperbarui** di bagian atas berubah bila berhasil.
 
-> Agar repositori tetap ringan, hapus file SWS minggu sebelumnya saat mengunggah yang baru —
-> cukup satu file terbaru di `data/raw/`. Riwayat pencapaian tetap aman karena setiap deal
-> membawa tanggal dan minggu deal-nya sendiri.
+### Bila GitHub Actions tidak bisa jalan
 
-Jika ada yang gagal, buka tab **Actions** di GitHub; langkah yang merah memuat pesan errornya
-(paling sering: nama sheet berubah atau file bukan `.xlsx`).
+Percobaan pertama di repositori ini gagal sebelum runner dialokasikan — tidak ada log sama sekali,
+yang biasanya berarti kuota/pengaturan penagihan Actions di akun. Periksa
+**Settings → Billing → Plans and usage** (dan *Actions → General* untuk memastikan workflow diizinkan).
 
-## 2. Mengaktifkan GitHub Pages (sekali saja)
+Selama Actions belum aktif, perbarui data dari komputer sendiri:
 
-**Settings → Pages → Build and deployment → Source: GitHub Actions.**
-Setelah itu tautan publiknya: `https://dimscm.github.io/dimscm/`
+```bash
+git pull
+pip install -r scripts/requirements.txt
+python scripts/convert_sws.py data/raw/SWS_W34__G2.xlsx
+git add data/dashboard.json data/raw && git commit -m "data: SWS W34" && git push
+```
 
-Penerbitan hanya berjalan dari **branch default** repositori. Selama pekerjaan ini masih berada di
-branch `claude/web-dashboard-insentif-publik-2zp9so`, gabungkan (merge) dulu ke branch default
-agar tautan publiknya aktif.
+Hasilnya sama persis — halaman publik langsung ikut terbarui.
 
 ## 3. Isi dashboard
 
@@ -113,5 +128,5 @@ config/scheme.json             skema insentif & pengaturan — satu-satunya temp
 scripts/convert_sws.py         konversi SWS .xlsx → data/dashboard.json
 data/raw/                      tempat mengunggah file SWS mingguan
 data/dashboard.json            data hasil konversi yang dibaca halaman (dibuat otomatis)
-.github/workflows/dashboard.yml  otomatisasi konversi + penerbitan Pages
+.github/workflows/dashboard.yml  otomatisasi konversi data mingguan
 ```
