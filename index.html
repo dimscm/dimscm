@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="id" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard Insentif AFPS &amp; RFPM — Promotion M3</title>
+<meta name="description" content="Dashboard pencapaian perpanjangan kontrak dan NOO ber-AP terhadap skema insentif AFPS &amp; RFPM, berbasis data master SWS mingguan.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <h1 id="judul">Dashboard Insentif AFPS &amp; RFPM</h1>
+      <p class="sub" id="subjudul">Departemen Promotion M3</p>
+      <div class="chips" id="chips"></div>
+    </div>
+    <button class="btn" id="tema" type="button" title="Ganti tema terang/gelap">Tema</button>
+  </header>
+
+  <div id="loading" class="loading">Memuat data SWS…</div>
+  <div id="gagal" class="note hidden"></div>
+
+  <main id="app" class="hidden">
+
+    <div class="filters" role="group" aria-label="Filter data">
+      <div class="field">
+        <label for="f-kuartal">Kuartal</label>
+        <select id="f-kuartal"></select>
+      </div>
+      <div class="field">
+        <label for="f-region">RFPM / Region</label>
+        <select id="f-region"><option value="">Semua region</option></select>
+      </div>
+      <div class="field">
+        <label for="f-afps">AFPS</label>
+        <select id="f-afps"><option value="">Semua AFPS</option></select>
+      </div>
+      <div class="field">
+        <label for="f-sumber">Sumber deal</label>
+        <select id="f-sumber">
+          <option value="">Perpanjangan + NOO</option>
+          <option value="PERPANJANGAN">Perpanjangan saja</option>
+          <option value="NOO">NOO ber-AP saja</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-cari">Cari outlet / AP / kota</label>
+        <input type="search" id="f-cari" placeholder="mis. BAKSO, BEV/SUN/26…" autocomplete="off">
+      </div>
+      <button class="btn" id="reset" type="button">Reset</button>
+    </div>
+
+    <nav class="tabs" role="tablist" aria-label="Bagian dashboard">
+      <button class="tab" role="tab" data-tab="ringkasan" aria-selected="true">Ringkasan</button>
+      <button class="tab" role="tab" data-tab="afps" aria-selected="false">Per AFPS</button>
+      <button class="tab" role="tab" data-tab="rfpm" aria-selected="false">Per RFPM</button>
+      <button class="tab" role="tab" data-tab="detail" aria-selected="false">Detail Outlet</button>
+      <button class="tab" role="tab" data-tab="skema" aria-selected="false">Skema Insentif</button>
+      <button class="tab" role="tab" data-tab="catatan" aria-selected="false">Catatan Data</button>
+    </nav>
+
+    <!-- ============ RINGKASAN ============ -->
+    <section id="p-ringkasan" role="tabpanel">
+      <div class="tiles" id="tiles"></div>
+
+      <div class="card">
+        <h2>Pencapaian KPI terhadap target skema</h2>
+        <p class="hint" id="kpi-hint"></p>
+        <div class="kpis" id="kpi-cards"></div>
+        <div class="note info" id="kpi-note"></div>
+      </div>
+
+      <div class="card">
+        <div class="chart-grid">
+          <figure>
+            <figcaption>Deal per kuartal</figcaption>
+            <p class="figsub">Jumlah outlet, tanggal deal 2026</p>
+            <div id="chart-kuartal"></div>
+            <div class="legend">
+              <span><i style="background:var(--s1)"></i>Perpanjangan</span>
+              <span><i style="background:var(--s2)"></i>NOO ber-AP</span>
+            </div>
+          </figure>
+          <figure>
+            <figcaption>Deal per minggu</figcaption>
+            <p class="figsub" id="figsub-minggu">Berdasarkan kolom Week Deal</p>
+            <div id="chart-minggu"></div>
+            <div class="legend">
+              <span><i style="background:var(--s1)"></i>Perpanjangan</span>
+              <span><i style="background:var(--s2)"></i>NOO ber-AP</span>
+            </div>
+          </figure>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Pencapaian KPI per RFPM</h2>
+        <p class="hint">Total deal yang masuk KPI (Kuliner + Lokpen + Foodcourt). Garis tegak = target region.</p>
+        <div id="chart-region"></div>
+      </div>
+
+      <div class="card">
+        <h2>Sebaran channel</h2>
+        <p class="hint">Komposisi outlet yang sudah deal pada filter aktif.</p>
+        <div id="chart-channel"></div>
+      </div>
+    </section>
+
+    <!-- ============ PER AFPS ============ -->
+    <section id="p-afps" role="tabpanel" class="hidden">
+      <div class="card">
+        <h2>Ringkasan pencapaian per AFPS</h2>
+        <p class="hint" id="afps-hint"></p>
+        <div class="tools">
+          <span class="count" id="afps-count"></span>
+          <button class="btn" data-unduh="afps" type="button">Unduh CSV</button>
+        </div>
+        <div class="tablewrap"><table id="t-afps"></table></div>
+        <div id="afps-legend" class="legend-tier"></div>
+      </div>
+    </section>
+
+    <!-- ============ PER RFPM ============ -->
+    <section id="p-rfpm" role="tabpanel" class="hidden">
+      <div class="card">
+        <h2>Ringkasan pencapaian per RFPM (region)</h2>
+        <p class="hint" id="rfpm-hint"></p>
+        <div class="tools">
+          <span class="count" id="rfpm-count"></span>
+          <button class="btn" data-unduh="rfpm" type="button">Unduh CSV</button>
+        </div>
+        <div class="tablewrap"><table id="t-rfpm"></table></div>
+        <div id="rfpm-legend" class="legend-tier"></div>
+        <div class="note" id="rfpm-note"></div>
+      </div>
+    </section>
+
+    <!-- ============ DETAIL ============ -->
+    <section id="p-detail" role="tabpanel" class="hidden">
+      <div class="card">
+        <h2>Detail outlet yang sudah deal</h2>
+        <p class="hint">Perpanjangan kontrak (sheet EXT, status DEAL) dan NOO yang sudah terbit nomor AP (sheet NOO). Klik judul kolom untuk mengurutkan.</p>
+        <div class="tools">
+          <span class="count" id="detail-count"></span>
+          <div>
+            <button class="btn" id="lagi" type="button">Muat 200 baris lagi</button>
+            <button class="btn" data-unduh="detail" type="button">Unduh CSV</button>
+          </div>
+        </div>
+        <div class="tablewrap"><table id="t-detail"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ SKEMA ============ -->
+    <section id="p-skema" role="tabpanel" class="hidden">
+      <div class="card">
+        <h2>Skema insentif Q3 2026 (Juli – September)</h2>
+        <p class="hint">Sumber: Scheme Insentif Q3 2026 — Departemen Promotion M3. Angka pada file <code>config/scheme.json</code>; ubah di sana bila skema direvisi.</p>
+        <div class="tablewrap"><table id="t-skema"></table></div>
+        <div id="skema-catatan"></div>
+      </div>
+      <div class="card">
+        <h2>Cara dashboard memetakan data SWS ke KPI</h2>
+        <div class="tablewrap"><table id="t-mapping"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ CATATAN DATA ============ -->
+    <section id="p-catatan" role="tabpanel" class="hidden">
+      <div class="card">
+        <h2>Catatan kualitas data</h2>
+        <p class="hint">Baris SWS yang tidak konsisten. Baris ini tetap ditampilkan pada detail, tetapi <strong>tidak dihitung</strong> pada pencapaian kuartal bila tanggal deal kosong/di luar rentang wajar.</p>
+        <div class="tools">
+          <span class="count" id="catatan-count"></span>
+          <button class="btn" data-unduh="catatan" type="button">Unduh CSV</button>
+        </div>
+        <div class="tablewrap"><table id="t-catatan"></table></div>
+      </div>
+      <div class="card">
+        <h2>Cara memperbarui data mingguan</h2>
+        <ol id="cara-update">
+          <li>Buka folder <code>data/raw/</code> pada repositori GitHub ini.</li>
+          <li>Klik <em>Add file → Upload files</em>, unggah file SWS terbaru (mis. <code>SWS_W34__G2.xlsx</code>), lalu <em>Commit</em>.</li>
+          <li>GitHub Actions otomatis mengubahnya menjadi <code>data/dashboard.json</code> dan menerbitkan ulang halaman ini — biasanya selesai dalam 2–3 menit.</li>
+          <li>Muat ulang halaman; stempel minggu &amp; tanggal di bagian atas akan berubah.</li>
+        </ol>
+      </div>
+    </section>
+
+    <footer>
+      <p id="footer-meta"></p>
+      <p>Halaman ini bersifat publik: siapa pun yang memiliki tautannya dapat melihat seluruh data yang ditampilkan.
+         Untuk menyembunyikan kolom sensitif (no. telepon PIC, nilai kompensasi/branding, omset), ubah
+         <code>tampilkan_data_sensitif</code> menjadi <code>false</code> pada <code>config/scheme.json</code>.</p>
+    </footer>
+
+  </main>
+</div>
+<div class="tt" id="tt" role="status" aria-live="polite"></div>
+<script src="assets/app.js"></script>
+</body>
+</html>

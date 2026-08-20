@@ -1,0 +1,224 @@
+{
+  "judul": "Dashboard Insentif AFPS & RFPM",
+  "subjudul": "Departemen Promotion M3 — GRFPM 2",
+  "periode_aktif": "2026-Q3",
+  "tampilkan_data_sensitif": true,
+  "catatan_sumber": "Skema Insentif Q3 2026 (Juli–September) — Draft revised. Data master: Super Work Sheet (SWS) yang diperbarui setiap minggu.",
+  "kuartal": [
+    {
+      "id": "2026-Q1",
+      "label": "Q1 2026",
+      "rentang": "Jan – Mar 2026"
+    },
+    {
+      "id": "2026-Q2",
+      "label": "Q2 2026",
+      "rentang": "Apr – Jun 2026"
+    },
+    {
+      "id": "2026-Q3",
+      "label": "Q3 2026",
+      "rentang": "Jul – Sep 2026"
+    },
+    {
+      "id": "2026-Q4",
+      "label": "Q4 2026",
+      "rentang": "Okt – Des 2026"
+    }
+  ],
+  "channel_ke_kpi": {
+    "KULINER": "kuliner",
+    "LOKPEN": "lokpen",
+    "SEKOLAH": "lokpen",
+    "FOODCOURT": "foodcourt",
+    "DTW/POI": "lainnya",
+    "DTW": "lainnya",
+    "POI": "lainnya",
+    "SPORT": "lainnya",
+    "REST AREA": "lainnya"
+  },
+  "kpi": [
+    {
+      "id": "kuliner",
+      "no": 1,
+      "nama": "NOO / Takeover Kuliner",
+      "nama_pendek": "Kuliner",
+      "kontrak": "BB / Blocking Only",
+      "otomatis": true,
+      "keterangan": "Gabungan perpanjangan kontrak (sheet EXT) dan NOO ber-AP (sheet NOO) dengan channel KULINER. Dasar: password dealing NOO/Takeover mencakup kuliner yang layak perpanjang dan sudah diperpanjang.",
+      "afps": {
+        "target": 15,
+        "tiers": [
+          {
+            "label": "≥100%",
+            "pct": 1.0,
+            "insentif": 2100000
+          },
+          {
+            "label": "≥85%",
+            "pct": 0.85,
+            "insentif": 1680000
+          },
+          {
+            "label": "≥75%",
+            "pct": 0.75,
+            "insentif": 1260000
+          }
+        ]
+      },
+      "rfpm": {
+        "target_per_afps": 15,
+        "tiers": [
+          {
+            "label": "≥100%",
+            "pct": 1.0,
+            "insentif": 3000000
+          },
+          {
+            "label": "≥85%",
+            "pct": 0.85,
+            "insentif": 2400000
+          },
+          {
+            "label": "≥75%",
+            "pct": 0.75,
+            "insentif": 1800000
+          }
+        ]
+      }
+    },
+    {
+      "id": "lokpen",
+      "no": 2,
+      "nama": "NOO Lokpen",
+      "nama_pendek": "Lokpen",
+      "kontrak": "BB / Branding Only / Blocking Only / Ikat Target 1 Tahun",
+      "otomatis": true,
+      "keterangan": "Gabungan perpanjangan kontrak dan NOO ber-AP dengan channel LOKPEN (SMP/SMA min. 400 siswa, Universitas min. 5.000 mahasiswa).",
+      "afps": {
+        "target": 15,
+        "tiers": [
+          {
+            "label": "≥100%",
+            "pct": 1.0,
+            "insentif": 2100000
+          },
+          {
+            "label": "≥85%",
+            "pct": 0.85,
+            "insentif": 1680000
+          },
+          {
+            "label": "≥75%",
+            "pct": 0.75,
+            "insentif": 1260000
+          }
+        ]
+      },
+      "rfpm": {
+        "target_per_afps": 15,
+        "tiers": [
+          {
+            "label": "≥100%",
+            "pct": 1.0,
+            "insentif": 3000000
+          },
+          {
+            "label": "≥85%",
+            "pct": 0.85,
+            "insentif": 2400000
+          },
+          {
+            "label": "≥75%",
+            "pct": 0.75,
+            "insentif": 1800000
+          }
+        ]
+      }
+    },
+    {
+      "id": "foodcourt",
+      "no": 3,
+      "nama": "Dealing NOO Foodcourt / Pujasera Ramai",
+      "nama_pendek": "Foodcourt",
+      "kontrak": "BB / Blocking Only — min. 10 tenant, @Rp 600.000",
+      "otomatis": true,
+      "keterangan": "Channel FOODCOURT. Tier RFPM memakai jumlah outlet absolut (≥5 / 4 / 3 outlet), bukan persentase.",
+      "afps": {
+        "target": 3,
+        "tiers": [
+          {
+            "label": "≥100%",
+            "pct": 1.0,
+            "insentif": 1800000
+          },
+          {
+            "label": "≥85%",
+            "pct": 0.85,
+            "insentif": 1000000
+          },
+          {
+            "label": "≥75%",
+            "pct": 0.75,
+            "insentif": 500000
+          }
+        ]
+      },
+      "rfpm": {
+        "target": 5,
+        "tiers": [
+          {
+            "label": "≥5 outlet",
+            "min": 5,
+            "insentif": 3000000
+          },
+          {
+            "label": "4 outlet",
+            "min": 4,
+            "insentif": 2400000
+          },
+          {
+            "label": "3 outlet",
+            "min": 3,
+            "insentif": 1800000
+          }
+        ]
+      }
+    },
+    {
+      "id": "dealing_rfpm",
+      "no": 4,
+      "nama": "Dealing Target Outlet RFPM (Kuliner & Lokpen)",
+      "nama_pendek": "Dealing RFPM",
+      "kontrak": "BB / Blocking Only",
+      "otomatis": false,
+      "hanya_rfpm": true,
+      "keterangan": "Dealing atas nama RFPM sendiri: 15 outlet / 3 bulan (100% ≥15, 85% min. 12, 75% min. 9). Tidak dapat dihitung otomatis karena SWS tidak memuat kolom pemilik deal RFPM — isi manual di luar dashboard.",
+      "rfpm": {
+        "target": 15,
+        "tiers": [
+          {
+            "label": "≥15 outlet",
+            "min": 15,
+            "insentif": 3000000
+          },
+          {
+            "label": "min. 12 outlet",
+            "min": 12,
+            "insentif": 2400000
+          },
+          {
+            "label": "min. 9 outlet",
+            "min": 9,
+            "insentif": 1800000
+          }
+        ]
+      }
+    }
+  ],
+  "kpi_lainnya": {
+    "id": "lainnya",
+    "nama": "Dealing di luar KPI Q3 (DTW/POI, Sport, Rest Area)",
+    "keterangan": "Tetap ditampilkan sebagai aktivitas, tidak masuk perhitungan insentif Q3 2026."
+  }
+}

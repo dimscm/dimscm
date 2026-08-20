@@ -1,0 +1,88 @@
+name: Bangun data & terbitkan dashboard
+
+on:
+  push:
+    paths:
+      - 'data/raw/**'
+      - 'config/**'
+      - 'scripts/**'
+      - 'assets/**'
+      - 'index.html'
+      - '.github/workflows/dashboard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: dashboard-pages
+  cancel-in-progress: false
+
+jobs:
+  bangun:
+    name: Konversi SWS terbaru
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Pasang dependensi
+        run: pip install -r scripts/requirements.txt
+
+      - name: Pilih file SWS terbaru di data/raw
+        id: pilih
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, re, pathlib
+          kandidat = [p for p in pathlib.Path('data/raw').glob('*.xls*') if not p.name.startswith('~$')]
+          if not kandidat:
+              print('file=')
+              raise SystemExit(0)
+          def kunci(p):
+              m = re.search(r'[_\-\s]?W(\d{1,2})', p.stem, re.IGNORECASE)
+              return (int(m.group(1)) if m else -1, p.stat().st_mtime)
+          print('file=' + str(sorted(kandidat, key=kunci)[-1]))
+          PY
+
+      - name: Konversi ke data/dashboard.json
+        if: steps.pilih.outputs.file != ''
+        run: |
+          echo "Memakai ${{ steps.pilih.outputs.file }}"
+          python scripts/convert_sws.py "${{ steps.pilih.outputs.file }}"
+
+      - name: Commit hasil konversi
+        if: steps.pilih.outputs.file != ''
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- data/dashboard.json; then
+            echo "dashboard.json tidak berubah."
+          else
+            git add data/dashboard.json
+            git commit -m "data: perbarui dashboard.json dari $(basename '${{ steps.pilih.outputs.file }}')"
+            git push
+          fi
+
+      - name: Siapkan artefak halaman
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+  terbitkan:
+    name: Terbitkan ke GitHub Pages
+    needs: bangun
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
