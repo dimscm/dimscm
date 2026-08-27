@@ -110,6 +110,17 @@ def week_iso(d):
     return d.isocalendar()[1] if d else None
 
 
+def cek_akhir_kontrak(tgl_deal, akhir):
+    """Catatan bila tanggal akhir kontrak tidak masuk akal terhadap tanggal deal."""
+    if not (tgl_deal and akhir):
+        return []
+    if akhir < tgl_deal:
+        return [f"Tanggal akhir kontrak ({akhir.isoformat()}) mendahului tanggal deal ({tgl_deal.isoformat()})"]
+    if (akhir - tgl_deal).days > 6 * 365:
+        return [f"Kontrak berlaku lebih dari 6 tahun ({tgl_deal.isoformat()} s/d {akhir.isoformat()}) — periksa tahunnya"]
+    return []
+
+
 def kuartal(d):
     return f"{d.year}-Q{(d.month - 1) // 3 + 1}" if d else None
 
@@ -218,6 +229,7 @@ def parse_ext(kol, data, channel_ke_kpi):
             masalah.append(f"Tanggal deal di luar rentang wajar: {tgl_deal.isoformat()}")
         if not ap_baru:
             masalah.append("Sudah DEAL tetapi nomor AP baru belum terisi")
+        masalah += cek_akhir_kontrak(tgl_deal, as_date(kol.get(r, "TANGGAL END KONTRAK NEW")))
         for m in masalah:
             issues.append({"sheet": "EXT", "no_outlet": no_outlet, "outlet": outlet,
                            "afps": afps, "region": region, "masalah": m})
@@ -292,6 +304,7 @@ def parse_noo(kol, data, channel_ke_kpi):
             masalah.append("Sudah DEAL/ber-AP tetapi TGL DEAL kosong")
         elif tgl_deal.year not in TAHUN_VALID:
             masalah.append(f"Tanggal deal di luar rentang wajar: {tgl_deal.isoformat()}")
+        masalah += cek_akhir_kontrak(tgl_deal, as_date(kol.get(r, "TANGGAL END KONTRAK BASED ON PKS")))
         for m in masalah:
             issues.append({"sheet": "NOO", "no_outlet": no_outlet, "outlet": outlet,
                            "afps": afps, "region": region, "masalah": m})

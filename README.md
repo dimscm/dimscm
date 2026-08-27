@@ -64,7 +64,8 @@ git add data/dashboard.json data/raw && git commit -m "data: SWS W34" && git pus
 | **Skema Insentif** | Tabel skema beserta tier, dan pemetaan channel SWS ke tiap KPI |
 | **Catatan Data** | Baris SWS yang tidak konsisten dan perlu diperbaiki admin |
 
-Filter di bagian atas berlaku untuk semua halaman: **kuartal, bulan, RFPM/region, AFPS, sumber, dan pencarian**.
+Filter di bagian atas berlaku untuk semua halaman: **kuartal, bulan, akhir kontrak, RFPM/region, AFPS,
+sumber, dan pencarian**.
 Setiap filter dapat dipilih lebih dari satu (mis. Q1 + Q2, atau region Cibosi + Jakut-Jaktim 1); tanpa centang
 berarti semua. Angka di sebelah kanan tiap pilihan adalah jumlah outlet deal pada pilihan itu.
 
@@ -75,7 +76,12 @@ dikalikan jumlah kuartal yang aktif, dan titik warna pada sel KPI bersifat indik
 **Filter bulan.** Daftarnya selalu lengkap: bila kuartal dipilih, ketiga bulannya ditampilkan;
 bila tidak, daftar berjalan dari bulan pertama yang ada datanya sampai **Desember tahun terakhir**.
 Bulan yang belum ada dealnya tetap muncul dengan angka 0 agar bisa dipilih untuk periode berjalan.
-Berguna untuk melihat capaian bulanan. Bila bulan yang dipilih memotong kuartal (mis. hanya
+Berguna untuk melihat capaian bulanan.
+
+**Filter akhir kontrak.** Berdasarkan tanggal berakhirnya kontrak baru, sehingga jangkauannya jauh melewati
+tanggal deal — pada data W33 sampai 2036. Gunakan untuk menyiapkan perpanjangan: ketik tahunnya di kotak
+pencarian dropdown (mis. `2027`) lalu klik **Pilih semua** untuk mengambil seluruh bulan di tahun itu.
+Karena filter ini hanya mengambil sebagian isi kuartal, estimasi insentif ikut ditampilkan sebagai "—". Bila bulan yang dipilih memotong kuartal (mis. hanya
 Januari dari Q1), estimasi insentif ditampilkan sebagai "—" karena syarat skema adalah 3 bulan penuh; angka
 capaian tetap ditampilkan. Kosongkan filter bulan untuk memunculkan kembali estimasi insentif.
 

@@ -6,7 +6,7 @@
 const S = {
   cfg: null, data: null,
   // Semua filter berupa daftar; daftar kosong berarti "semua".
-  kuartal: [], bulan: [], region: [], afps: [], sumber: [], cari: '',
+  kuartal: [], bulan: [], akhir: [], region: [], afps: [], sumber: [], cari: '',
   view: 'insentif', limit: 200, sort: {}, ui: {},
 };
 
@@ -128,6 +128,16 @@ function bacaSheet(wb, nama) {
   return { kol, data };
 }
 
+/** Catatan bila tanggal akhir kontrak tidak masuk akal terhadap tanggal deal. */
+function cekAkhirKontrak(tglDeal, akhir) {
+  if (!tglDeal || !akhir) return [];
+  if (akhir < tglDeal) return [`Tanggal akhir kontrak (${keIso(akhir)}) mendahului tanggal deal (${keIso(tglDeal)})`];
+  if ((akhir - tglDeal) / 86400000 > 6 * 365) {
+    return [`Kontrak berlaku lebih dari 6 tahun (${keIso(tglDeal)} s/d ${keIso(akhir)}) — periksa tahunnya`];
+  }
+  return [];
+}
+
 function rapikanGrfpm(v) {
   const s = UP(v).replace('GRPFM', 'GRFPM');
   const m = s.match(/(\d+)/);
@@ -165,6 +175,7 @@ function dariWorkbook(wb, namaFile) {
     if (!tgl) masalah.push('Status DEAL tetapi TANGGAL DEAL kosong');
     else if (!TAHUN_VALID.includes(tahunDari(tgl))) masalah.push('Tanggal deal di luar rentang wajar: ' + keIso(tgl));
     if (!apBaru) masalah.push('Sudah DEAL tetapi nomor AP baru belum terisi');
+    masalah.push(...cekAkhirKontrak(tgl, keTanggal(kol.get(r, 'TANGGAL END KONTRAK NEW'))));
     catat('EXT', r, kol, masalah, 'NAMA OUTLET');
     const valid = !!tgl && TAHUN_VALID.includes(tahunDari(tgl));
 
@@ -207,6 +218,7 @@ function dariWorkbook(wb, namaFile) {
     if (ap && status !== 'DEAL') masalah.push(`Sudah ada nomor AP tetapi status masih '${status || 'kosong'}'`);
     if (!tgl) masalah.push('Sudah DEAL/ber-AP tetapi TGL DEAL kosong');
     else if (!TAHUN_VALID.includes(tahunDari(tgl))) masalah.push('Tanggal deal di luar rentang wajar: ' + keIso(tgl));
+    masalah.push(...cekAkhirKontrak(tgl, keTanggal(kol.get(r, 'TANGGAL END KONTRAK BASED ON PKS'))));
     catat('NOO', r, kol, masalah, 'NAMA OUTLET');
     const adaTgl = !!tgl && TAHUN_VALID.includes(tahunDari(tgl));
 
@@ -393,6 +405,14 @@ function buatFilter(hanya) {
     S.bulan = S.bulan.filter((m) => daftar.includes(m));         // buang bulan di luar kuartal terpilih
     S.ui.bulan = multiPilih($('#f-bulan'), 'bulan', opsi, 'Semua bulan', render);
   }
+  if (!hanya) {
+    // Periode berakhirnya kontrak baru — jangkauannya jauh melewati tanggal deal (2027, 2028, dst).
+    const c = hitung((d) => (d.kontrak_akhir_baru || '').slice(0, 7));
+    const tanpa = D.filter((d) => !d.kontrak_akhir_baru).length;
+    const opsi = Object.keys(c).sort().map((m) => ({ v: m, t: labelBulanPanjang(m), ts: labelBulan(m), n: c[m] }));
+    if (tanpa) opsi.push({ v: '-', t: 'Tanpa tanggal akhir kontrak', ts: 'Tanpa tanggal', n: tanpa });
+    S.ui.akhir = multiPilih($('#f-akhir'), 'akhir', opsi, 'Semua periode', render);
+  }
   if (!hanya || hanya === 'region') {
     const c = hitung((d) => d.region);
     const opsi = S.data.region.map((r) => ({ v: r.nama, t: r.nama, n: c[r.nama] || 0 }));
@@ -421,8 +441,9 @@ function kuartalAktif() {
   if (S.kuartal.length) return S.kuartal.slice().sort();
   return Array.from(new Set(S.data.deals.filter((d) => d.valid && d.kuartal).map((d) => d.kuartal))).sort();
 }
-/** True bila filter bulan tidak memotong kuartal mana pun — syarat insentif boleh dihitung. */
+/** True bila kuartal tidak terpotong filter lain — syarat insentif boleh dihitung. */
 function bulanPenuh() {
+  if (S.akhir.length) return false;   // saringan akhir kontrak hanya mengambil sebagian deal satu kuartal
   if (!S.bulan.length) return true;
   const adaDiData = new Set(S.data.deals.filter((d) => d.valid && d.tgl_deal).map((d) => d.tgl_deal.slice(0, 7)));
   return kuartalAktif().every((q) => bulanKuartal(q).filter((m) => adaDiData.has(m)).every((m) => S.bulan.includes(m)));
@@ -470,7 +491,7 @@ function mulai() {
 
   $('#f-cari').oninput = (e) => { S.cari = e.target.value.trim().toUpperCase(); S.limit = 200; render(); };
   $('#reset').onclick = () => {
-    S.kuartal = []; S.bulan = []; S.region = []; S.afps = []; S.sumber = []; S.cari = ''; S.limit = 200;
+    S.kuartal = []; S.bulan = []; S.akhir = []; S.region = []; S.afps = []; S.sumber = []; S.cari = ''; S.limit = 200;
     $('#f-cari').value = '';
     buatFilter(); render();
   };
@@ -541,6 +562,7 @@ function terpilih() {
     if (!d.valid) return false;
     if (S.kuartal.length && !S.kuartal.includes(d.kuartal)) return false;
     if (bulan && !bulan.has((d.tgl_deal || '').slice(0, 7))) return false;
+    if (S.akhir.length && !S.akhir.includes(d.kontrak_akhir_baru ? d.kontrak_akhir_baru.slice(0, 7) : '-')) return false;
     if (S.region.length && !S.region.includes(d.region)) return false;
     if (S.afps.length && !S.afps.includes(d.afps)) return false;
     if (S.sumber.length && !S.sumber.includes(d.sumber)) return false;
@@ -627,6 +649,12 @@ function render() {
   const bagian = [];
   bagian.push(!S.kuartal.length ? 'semua kuartal' : (S.kuartal.length === 1 ? labelKuartalId(S.kuartal[0]).split(' · ')[0] : S.kuartal.slice().sort().map((q) => labelKuartalId(q).split(' · ')[0]).join(' + ')));
   if (S.bulan.length) bagian.push('bulan ' + S.bulan.slice().sort().map(labelBulan).join(', '));
+  if (S.akhir.length) {                       // ringkas per tahun agar barisnya tidak kepanjangan
+    const perTahun = {};
+    S.akhir.forEach((m) => { const y = m === '-' ? '-' : m.slice(0, 4); (perTahun[y] = perTahun[y] || []).push(m); });
+    bagian.push('akhir kontrak ' + Object.keys(perTahun).sort().map((y) => (y === '-' ? 'tanpa tanggal'
+      : (perTahun[y].length > 3 ? `${y} (${perTahun[y].length} bulan)` : perTahun[y].sort().map(labelBulan).join(', ')))).join(' · '));
+  }
   if (S.region.length) bagian.push(S.region.length === 1 ? S.region[0] : `${S.region.length} region (${S.region.join(', ')})`);
   if (S.afps.length) bagian.push(S.afps.length === 1 ? S.afps[0] : `${S.afps.length} AFPS`);
   if (S.sumber.length === 1) bagian.push(S.sumber[0] === 'NOO' ? 'NOO ber-AP saja' : 'perpanjangan saja');
@@ -657,7 +685,7 @@ function renderInsentif() {
     {
       ic: '💰', bg: 'bg-ungu', num: c.hitung ? rpPendek(totalInsentif) : '—', lbl: 'Estimasi insentif AFPS',
       sub: c.hitung ? `dari maks ${rpPendek(maks)} · ${lingkup.length} AFPS · ${c.kuartals.length} kuartal`
-        : 'filter bulan memotong kuartal',
+        : 'periode terpotong filter',
     },
   ].map((t) => `<div class="kpi-solid ${t.bg}"><div class="ic">${t.ic}</div>
       <div class="num">${t.num}</div><div class="lbl">${esc(t.lbl)}</div><div class="sub2">${esc(t.sub)}</div></div>`).join('');
@@ -680,7 +708,7 @@ function renderInsentif() {
   }).join('');
   const catatanKpi = [`Perpanjangan dan NOO digabung per channel sesuai ketentuan skema.`];
   if (c.lainnya.ach) catatanKpi.push(`<strong>${int(c.lainnya.ach)}</strong> deal channel DTW/POI, Sport, dan Rest Area ditampilkan tetapi tidak masuk KPI.`);
-  if (!c.hitung) catatanKpi.push('<strong>Insentif tidak dihitung</strong> karena filter bulan memotong kuartal — target skema berlaku per 3 bulan penuh. Kosongkan filter bulan untuk melihat estimasi insentif.');
+  if (!c.hitung) catatanKpi.push(`<strong>Insentif tidak dihitung</strong> karena filter ${S.akhir.length ? 'akhir kontrak' : 'bulan'} hanya mengambil sebagian isi kuartal — target skema berlaku per 3 bulan penuh. Kosongkan filter tersebut untuk melihat estimasi insentif.`);
   else if (c.kuartals.length > 1) catatanKpi.push(`Insentif dihitung <strong>per kuartal lalu dijumlahkan</strong> (${c.kuartals.length} kuartal). Titik warna pada tabel bersifat indikatif atas gabungan kuartal.`);
   $('#kpi-note').innerHTML = catatanKpi.join(' ');
 
@@ -710,7 +738,7 @@ function renderInsentif() {
     },
   };
   tabel($('#t-afps'), kolsA, urut(rowsA, 'afps'), 'afps', totA);
-  $('#legend-tier').innerHTML = !c.hitung ? '<span class="muted">Kosongkan filter bulan untuk melihat tier dan estimasi insentif.</span>'
+  $('#legend-tier').innerHTML = !c.hitung ? `<span class="muted">Kosongkan filter ${S.akhir.length ? 'akhir kontrak' : 'bulan'} untuk melihat tier dan estimasi insentif.</span>`
     : ['<span><i class="dot d100" style="border-radius:50%"></i>≥100%</span>', '<span><i class="dot d85" style="border-radius:50%"></i>≥85%</span>',
        '<span><i class="dot d75" style="border-radius:50%"></i>≥75%</span>', '<span><i class="dot d0" style="border-radius:50%"></i>di bawah 75% — tanpa insentif</span>'].join('');
 
@@ -990,6 +1018,7 @@ function chartKuartal() {
     && (!S.region.length || S.region.includes(d.region)) && (!S.afps.length || S.afps.includes(d.afps))
     && (!S.sumber.length || S.sumber.includes(d.sumber))
     && (!bulan || bulan.has((d.tgl_deal || '').slice(0, 7)))
+    && (!S.akhir.length || S.akhir.includes(d.kontrak_akhir_baru ? d.kontrak_akhir_baru.slice(0, 7) : '-'))
     && (!S.cari || `${d.outlet} ${d.afps} ${d.kota} ${d.ap}`.toUpperCase().includes(S.cari)));
   const qs = S.cfg.kuartal.filter((q) => semua.some((d) => d.kuartal === q.id));
   if (!qs.length) return kosong('#chart-kuartal', 'Belum ada deal dengan tanggal valid.');
