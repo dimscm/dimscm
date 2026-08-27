@@ -283,6 +283,18 @@ function labelKuartalId(id) {
   const [y, k] = id.split('-Q');
   return `Q${k} ${y}`;
 }
+/** Deret bulan berurutan dari `awal` sampai `akhir`, format YYYY-MM. */
+function rentangBulan(awal, akhir) {
+  const out = [];
+  let [y, m] = awal.split('-').map(Number);
+  const [ya, ma] = akhir.split('-').map(Number);
+  while (y < ya || (y === ya && m <= ma)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    if (++m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+
 /** Tiga bulan dalam satu kuartal, format YYYY-MM. */
 function bulanKuartal(id) {
   const [y, k] = id.split('-Q');
@@ -323,7 +335,7 @@ function multiPilih(host, key, opsi, kosongLabel, onChange) {
     const tampil = opsi.filter((o) => !q || o.t.toUpperCase().includes(q));
     list.innerHTML = tampil.length
       ? tampil.map((o) => `<label><input type="checkbox" value="${esc(o.v)}"${S[key].includes(o.v) ? ' checked' : ''}>
-          <span>${esc(o.t)}</span>${o.n != null ? `<span class="ms-n">${int(o.n)}</span>` : ''}</label>`).join('')
+          <span>${esc(o.t)}</span>${o.n != null ? `<span class="ms-n${o.n ? '' : ' nol'}">${int(o.n)}</span>` : ''}</label>`).join('')
       : '<div class="ms-kosong">Tidak ada pilihan yang cocok.</div>';
     $$('input', list).forEach((inp) => {
       inp.onchange = () => {
@@ -369,8 +381,16 @@ function buatFilter(hanya) {
   if (!hanya || hanya === 'kuartal' || hanya === 'bulan') {
     const dalamKuartal = D.filter((d) => !S.kuartal.length || S.kuartal.includes(d.kuartal));
     const c = hitung((d) => (d.tgl_deal || '').slice(0, 7), dalamKuartal);
-    const opsi = Object.keys(c).sort().map((m) => ({ v: m, t: labelBulanPanjang(m), ts: labelBulan(m), n: c[m] }));
-    S.bulan = S.bulan.filter((m) => c[m]);           // buang bulan di luar kuartal terpilih
+    let daftar;
+    if (S.kuartal.length) {
+      daftar = S.kuartal.slice().sort().flatMap(bulanKuartal);   // tiga bulan penuh tiap kuartal terpilih
+    } else {
+      const ada = Object.keys(hitung((d) => (d.tgl_deal || '').slice(0, 7))).sort();
+      // Sampai Desember tahun terakhir, agar bulan yang belum ada dealnya tetap bisa dipilih.
+      daftar = ada.length ? rentangBulan(ada[0], `${ada[ada.length - 1].slice(0, 4)}-12`) : [];
+    }
+    const opsi = daftar.map((m) => ({ v: m, t: labelBulanPanjang(m), ts: labelBulan(m), n: c[m] || 0 }));
+    S.bulan = S.bulan.filter((m) => daftar.includes(m));         // buang bulan di luar kuartal terpilih
     S.ui.bulan = multiPilih($('#f-bulan'), 'bulan', opsi, 'Semua bulan', render);
   }
   if (!hanya || hanya === 'region') {

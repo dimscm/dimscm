@@ -72,7 +72,10 @@ berarti semua. Angka di sebelah kanan tiap pilihan adalah jumlah outlet deal pad
 dinilai per kuartal lalu insentifnya dijumlahkan — bukan dari total gabungan. Kolom target pada tabel sudah
 dikalikan jumlah kuartal yang aktif, dan titik warna pada sel KPI bersifat indikatif atas gabungan kuartal.
 
-**Filter bulan.** Berguna untuk melihat capaian bulanan. Bila bulan yang dipilih memotong kuartal (mis. hanya
+**Filter bulan.** Daftarnya selalu lengkap: bila kuartal dipilih, ketiga bulannya ditampilkan;
+bila tidak, daftar berjalan dari bulan pertama yang ada datanya sampai **Desember tahun terakhir**.
+Bulan yang belum ada dealnya tetap muncul dengan angka 0 agar bisa dipilih untuk periode berjalan.
+Berguna untuk melihat capaian bulanan. Bila bulan yang dipilih memotong kuartal (mis. hanya
 Januari dari Q1), estimasi insentif ditampilkan sebagai "—" karena syarat skema adalah 3 bulan penuh; angka
 capaian tetap ditampilkan. Kosongkan filter bulan untuk memunculkan kembali estimasi insentif.
 

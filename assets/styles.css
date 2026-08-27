@@ -214,3 +214,4 @@ figcaption { font-size: 12px; font-weight: 800; margin-bottom: 2px; }
 .ms-list input { accent-color: var(--biru); width: 14px; height: 14px; margin: 0; flex: none; }
 .ms-list .ms-n { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-3); padding-left: 12px; }
 .ms-kosong { padding: 10px 8px; font-size: 12px; color: var(--ink-3); }
+.ms-list .ms-n.nol { opacity: .45; }
