@@ -64,7 +64,17 @@ git add data/dashboard.json data/raw && git commit -m "data: SWS W34" && git pus
 | **Skema Insentif** | Tabel skema beserta tier, dan pemetaan channel SWS ke tiap KPI |
 | **Catatan Data** | Baris SWS yang tidak konsisten dan perlu diperbaiki admin |
 
-Filter di bagian atas (kuartal, RFPM/region, AFPS, sumber, pencarian) berlaku untuk semua halaman.
+Filter di bagian atas berlaku untuk semua halaman: **kuartal, bulan, RFPM/region, AFPS, sumber, dan pencarian**.
+Setiap filter dapat dipilih lebih dari satu (mis. Q1 + Q2, atau region Cibosi + Jakut-Jaktim 1); tanpa centang
+berarti semua. Angka di sebelah kanan tiap pilihan adalah jumlah outlet deal pada pilihan itu.
+
+**Cara insentif dihitung saat kuartal dipilih lebih dari satu.** Target skema berlaku per 3 bulan, jadi tier
+dinilai per kuartal lalu insentifnya dijumlahkan — bukan dari total gabungan. Kolom target pada tabel sudah
+dikalikan jumlah kuartal yang aktif, dan titik warna pada sel KPI bersifat indikatif atas gabungan kuartal.
+
+**Filter bulan.** Berguna untuk melihat capaian bulanan. Bila bulan yang dipilih memotong kuartal (mis. hanya
+Januari dari Q1), estimasi insentif ditampilkan sebagai "—" karena syarat skema adalah 3 bulan penuh; angka
+capaian tetap ditampilkan. Kosongkan filter bulan untuk memunculkan kembali estimasi insentif.
 
 ## 4. Cara angka dihitung
 

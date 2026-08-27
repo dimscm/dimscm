@@ -180,3 +180,37 @@ figcaption { font-size: 12px; font-weight: 800; margin-bottom: 2px; }
   main { padding: 16px 14px 48px; }
 }
 @media print { .sidebar, .aksi, .filters { display: none; } .card { break-inside: avoid; } }
+
+/* ---------------- pilihan ganda (dropdown centang) ---------------- */
+.ms { position: relative; }
+.ms-btn {
+  width: 100%; text-align: left; font-family: inherit; font-size: 12.5px; font-weight: 600;
+  padding: 8px 28px 8px 10px; border: 1.5px solid rgba(22, 23, 33, .1); border-radius: 10px;
+  background: #fff; color: var(--ink); cursor: pointer; position: relative;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ms-btn:hover { border-color: rgba(11, 92, 173, .45); }
+.ms-btn[aria-expanded="true"] { border-color: var(--biru); box-shadow: 0 0 0 3px rgba(11, 92, 173, .15); }
+.ms-btn::after { content: '▾'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--ink-3); font-size: 11px; }
+.ms-btn.aktif { border-color: var(--biru); color: var(--biru); }
+.ms-pop {
+  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%; width: max-content; max-width: 320px;
+  background: #fff; border: 1px solid var(--garis); border-radius: 12px; padding: 8px;
+  box-shadow: 0 18px 38px -18px rgba(22, 23, 33, .45);
+}
+.ms-cari { margin-bottom: 6px; font-size: 12px; padding: 6px 8px; }
+.ms-aksi { display: flex; gap: 6px; margin-bottom: 6px; }
+.ms-aksi button {
+  flex: 1; font-family: inherit; font-size: 11px; font-weight: 700; padding: 5px 8px; cursor: pointer;
+  border: 1px solid var(--garis); border-radius: 8px; background: #F7F9FC; color: var(--ink-2);
+}
+.ms-aksi button:hover { background: #EEF2F8; color: var(--ink); }
+.ms-list { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.ms-list label {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px;
+  font-size: 12.5px; cursor: pointer; white-space: nowrap;
+}
+.ms-list label:hover { background: rgba(11, 92, 173, .06); }
+.ms-list input { accent-color: var(--biru); width: 14px; height: 14px; margin: 0; flex: none; }
+.ms-list .ms-n { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-3); padding-left: 12px; }
+.ms-kosong { padding: 10px 8px; font-size: 12px; color: var(--ink-3); }

@@ -5,8 +5,9 @@
 
 const S = {
   cfg: null, data: null,
-  kuartal: '', region: '', afps: '', sumber: '', cari: '',
-  view: 'insentif', limit: 200, sort: {},
+  // Semua filter berupa daftar; daftar kosong berarti "semua".
+  kuartal: [], bulan: [], region: [], afps: [], sumber: [], cari: '',
+  view: 'insentif', limit: 200, sort: {}, ui: {},
 };
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -271,6 +272,142 @@ function dariWorkbook(wb, namaFile) {
   };
 }
 
+/* ================================================================ filter pilihan ganda */
+
+const NAMA_BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const labelBulan = (ym) => { const [y, m] = ym.split('-'); return `${BULAN[+m - 1]} ${y}`; };
+const labelBulanPanjang = (ym) => { const [y, m] = ym.split('-'); return `${NAMA_BULAN[+m - 1]} ${y}`; };
+function labelKuartalId(id) {
+  const q = S.cfg.kuartal.find((x) => x.id === id);
+  if (q) return `${q.label} · ${q.rentang}`;
+  const [y, k] = id.split('-Q');
+  return `Q${k} ${y}`;
+}
+/** Tiga bulan dalam satu kuartal, format YYYY-MM. */
+function bulanKuartal(id) {
+  const [y, k] = id.split('-Q');
+  return [0, 1, 2].map((i) => `${y}-${String((k - 1) * 3 + 1 + i).padStart(2, '0')}`);
+}
+
+function tutupSemuaPopup() {
+  $$('.ms-pop').forEach((p) => p.classList.add('hidden'));
+  $$('.ms-btn').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+}
+document.addEventListener('click', (e) => { if (!e.target.closest('.ms')) tutupSemuaPopup(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') tutupSemuaPopup(); });
+
+/**
+ * Dropdown centang untuk satu filter. `key` adalah nama daftar di S
+ * (daftar kosong = semua). Isi daftar diubah langsung, lalu onChange dipanggil.
+ */
+function multiPilih(host, key, opsi, kosongLabel, onChange) {
+  const pakaiCari = opsi.length > 12;
+  host.innerHTML = `<div class="ms">
+      <button class="ms-btn" type="button" aria-expanded="false"></button>
+      <div class="ms-pop hidden">
+        ${pakaiCari ? '<input type="search" class="ms-cari" placeholder="Cari…" autocomplete="off">' : ''}
+        <div class="ms-aksi"><button type="button" data-aksi="semua">Pilih semua</button><button type="button" data-aksi="kosong">Kosongkan</button></div>
+        <div class="ms-list"></div>
+      </div>
+    </div>`;
+  const btn = $('.ms-btn', host), pop = $('.ms-pop', host), list = $('.ms-list', host), cari = $('.ms-cari', host);
+
+  const label = () => {
+    const a = S[key];
+    btn.textContent = !a.length ? kosongLabel
+      : (a.length === 1 ? (() => { const o = opsi.find((x) => x.v === a[0]) || {}; return o.ts || o.t || a[0]; })() : `${a.length} dipilih`);
+    btn.classList.toggle('aktif', a.length > 0);
+  };
+  const gambar = () => {
+    const q = (cari ? cari.value : '').trim().toUpperCase();
+    const tampil = opsi.filter((o) => !q || o.t.toUpperCase().includes(q));
+    list.innerHTML = tampil.length
+      ? tampil.map((o) => `<label><input type="checkbox" value="${esc(o.v)}"${S[key].includes(o.v) ? ' checked' : ''}>
+          <span>${esc(o.t)}</span>${o.n != null ? `<span class="ms-n">${int(o.n)}</span>` : ''}</label>`).join('')
+      : '<div class="ms-kosong">Tidak ada pilihan yang cocok.</div>';
+    $$('input', list).forEach((inp) => {
+      inp.onchange = () => {
+        const a = S[key], i = a.indexOf(inp.value);
+        if (inp.checked && i < 0) a.push(inp.value);
+        if (!inp.checked && i >= 0) a.splice(i, 1);
+        label(); onChange();
+      };
+    });
+  };
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const tertutup = pop.classList.contains('hidden');
+    tutupSemuaPopup();
+    if (tertutup) { pop.classList.remove('hidden'); btn.setAttribute('aria-expanded', 'true'); gambar(); if (cari) cari.focus(); }
+  };
+  pop.onclick = (e) => e.stopPropagation();
+  if (cari) cari.oninput = gambar;
+  $$('[data-aksi]', pop).forEach((b) => {
+    b.onclick = () => {
+      const q = (cari ? cari.value : '').trim().toUpperCase();
+      const kena = opsi.filter((o) => !q || o.t.toUpperCase().includes(q)).map((o) => o.v);
+      S[key] = b.dataset.aksi === 'semua' ? Array.from(new Set([...S[key], ...kena])) : S[key].filter((v) => !kena.includes(v));
+      label(); gambar(); onChange();
+    };
+  });
+  label();
+  return { label, gambar };
+}
+
+/** Bangun/segarkan seluruh filter. Pilihan bulan mengikuti kuartal, AFPS mengikuti region. */
+function buatFilter(hanya) {
+  const D = S.data.deals.filter((d) => d.valid);
+  const hitung = (f, sumber = D) => sumber.reduce((o, d) => { const k = f(d); if (k) o[k] = (o[k] || 0) + 1; return o; }, {});
+
+  if (!hanya || hanya === 'kuartal') {
+    const c = hitung((d) => d.kuartal);
+    const opsi = Object.keys(c).sort().map((id) => ({ v: id, t: labelKuartalId(id), ts: id.replace(/(\d{4})-Q(\d)/, 'Q$2 $1'), n: c[id] }));
+    S.ui.kuartal = multiPilih($('#f-kuartal'), 'kuartal', opsi, 'Semua kuartal', () => {
+      buatFilter('bulan'); render();
+    });
+  }
+  if (!hanya || hanya === 'kuartal' || hanya === 'bulan') {
+    const dalamKuartal = D.filter((d) => !S.kuartal.length || S.kuartal.includes(d.kuartal));
+    const c = hitung((d) => (d.tgl_deal || '').slice(0, 7), dalamKuartal);
+    const opsi = Object.keys(c).sort().map((m) => ({ v: m, t: labelBulanPanjang(m), ts: labelBulan(m), n: c[m] }));
+    S.bulan = S.bulan.filter((m) => c[m]);           // buang bulan di luar kuartal terpilih
+    S.ui.bulan = multiPilih($('#f-bulan'), 'bulan', opsi, 'Semua bulan', render);
+  }
+  if (!hanya || hanya === 'region') {
+    const c = hitung((d) => d.region);
+    const opsi = S.data.region.map((r) => ({ v: r.nama, t: r.nama, n: c[r.nama] || 0 }));
+    S.ui.region = multiPilih($('#f-region'), 'region', opsi, 'Semua region', () => {
+      buatFilter('afps'); render();
+    });
+  }
+  if (!hanya || hanya === 'region' || hanya === 'afps') {
+    const c = hitung((d) => d.afps);
+    const daftar = S.data.afps.filter((a) => !S.region.length || S.region.includes(a.region));
+    const opsi = daftar.map((a) => ({ v: a.nama, t: a.nama, n: c[a.nama] || 0 }));
+    S.afps = S.afps.filter((n) => daftar.some((a) => a.nama === n));
+    S.ui.afps = multiPilih($('#f-afps'), 'afps', opsi, 'Semua AFPS', render);
+  }
+  if (!hanya) {
+    const c = hitung((d) => d.sumber);
+    S.ui.sumber = multiPilih($('#f-sumber'), 'sumber', [
+      { v: 'PERPANJANGAN', t: 'Perpanjangan', n: c.PERPANJANGAN || 0 },
+      { v: 'NOO', t: 'NOO ber-AP', n: c.NOO || 0 },
+    ], 'Semua sumber', render);
+  }
+}
+
+/** Kuartal yang sedang dihitung (daftar kosong = seluruh kuartal pada data). */
+function kuartalAktif() {
+  if (S.kuartal.length) return S.kuartal.slice().sort();
+  return Array.from(new Set(S.data.deals.filter((d) => d.valid && d.kuartal).map((d) => d.kuartal))).sort();
+}
+/** True bila filter bulan tidak memotong kuartal mana pun — syarat insentif boleh dihitung. */
+function bulanPenuh() {
+  if (!S.bulan.length) return true;
+  const adaDiData = new Set(S.data.deals.filter((d) => d.valid && d.tgl_deal).map((d) => d.tgl_deal.slice(0, 7)));
+  return kuartalAktif().every((q) => bulanKuartal(q).filter((m) => adaDiData.has(m)).every((m) => S.bulan.includes(m)));
+}
+
 /* ================================================================ pemuatan awal */
 
 function tertanam(id) {
@@ -306,33 +443,16 @@ function mulai() {
   $('#brand-sub').textContent = data.meta.grfpm || 'Promotion M3';
   document.title = cfg.judul + ' — Promotion M3';
 
-  const fk = $('#f-kuartal');
-  fk.innerHTML = '';
-  const ada = new Set(data.deals.map((d) => d.kuartal).filter(Boolean));
-  const daftar = cfg.kuartal.filter((q) => ada.has(q.id));
-  daftar.forEach((q) => fk.add(new Option(`${q.label} · ${q.rentang}`, q.id)));
-  fk.add(new Option('Semua kuartal', 'ALL'));
-  if (!daftar.some((q) => q.id === S.kuartal)) {
-    S.kuartal = daftar.some((q) => q.id === cfg.periode_aktif) ? cfg.periode_aktif
-      : (daftar.length ? daftar[daftar.length - 1].id : 'ALL');
-  }
-  fk.value = S.kuartal;
+  const adaKuartal = new Set(data.deals.filter((d) => d.valid).map((d) => d.kuartal).filter(Boolean));
+  if (!S.kuartal.length && adaKuartal.has(cfg.periode_aktif)) S.kuartal = [cfg.periode_aktif];
+  S.kuartal = S.kuartal.filter((q) => adaKuartal.has(q));
+  buatFilter();
 
-  const fr = $('#f-region');
-  fr.innerHTML = '<option value="">Semua</option>';
-  data.region.forEach((r) => fr.add(new Option(r.nama, r.nama)));
-  fr.value = S.region;
-  isiAfps();
-
-  fk.onchange = () => { S.kuartal = fk.value; render(); };
-  fr.onchange = (e) => { S.region = e.target.value; S.afps = ''; isiAfps(); render(); };
-  $('#f-afps').onchange = (e) => { S.afps = e.target.value; render(); };
-  $('#f-sumber').onchange = (e) => { S.sumber = e.target.value; render(); };
   $('#f-cari').oninput = (e) => { S.cari = e.target.value.trim().toUpperCase(); S.limit = 200; render(); };
   $('#reset').onclick = () => {
-    S.region = S.afps = S.sumber = ''; S.cari = ''; S.limit = 200;
-    $('#f-region').value = ''; $('#f-sumber').value = ''; $('#f-cari').value = '';
-    isiAfps(); render();
+    S.kuartal = []; S.bulan = []; S.region = []; S.afps = []; S.sumber = []; S.cari = ''; S.limit = 200;
+    $('#f-cari').value = '';
+    buatFilter(); render();
   };
   $('#lagi').onclick = () => { S.limit += 200; render(); };
   $$('.navitem').forEach((b) => { b.onclick = () => pilihView(b.dataset.view); });
@@ -348,13 +468,6 @@ function mulai() {
   $('#gagal').classList.add('hidden');
   $('#isi').classList.remove('hidden');
   render();
-}
-
-function isiAfps() {
-  const sel = $('#f-afps');
-  sel.innerHTML = '<option value="">Semua</option>';
-  S.data.afps.filter((a) => !S.region || a.region === S.region).forEach((a) => sel.add(new Option(a.nama, a.nama)));
-  sel.value = S.afps;
 }
 
 function pilihView(v) {
@@ -403,13 +516,14 @@ const kpiOtomatis = () => S.cfg.kpi.filter((k) => k.otomatis);
 const kpiById = (id) => S.cfg.kpi.find((k) => k.id === id);
 
 function terpilih() {
-  const q = S.kuartal;
+  const bulan = S.bulan.length ? new Set(S.bulan) : null;
   return S.data.deals.filter((d) => {
-    if (q !== 'ALL' && d.kuartal !== q) return false;
-    if (q === 'ALL' && !d.valid) return false;
-    if (S.region && d.region !== S.region) return false;
-    if (S.afps && d.afps !== S.afps) return false;
-    if (S.sumber && d.sumber !== S.sumber) return false;
+    if (!d.valid) return false;
+    if (S.kuartal.length && !S.kuartal.includes(d.kuartal)) return false;
+    if (bulan && !bulan.has((d.tgl_deal || '').slice(0, 7))) return false;
+    if (S.region.length && !S.region.includes(d.region)) return false;
+    if (S.afps.length && !S.afps.includes(d.afps)) return false;
+    if (S.sumber.length && !S.sumber.includes(d.sumber)) return false;
     if (S.cari) {
       const hay = `${d.outlet} ${d.afps} ${d.kota} ${d.kecamatan} ${d.ap} ${d.brand} ${d.jenis} ${d.kategori}`.toUpperCase();
       if (!hay.includes(S.cari)) return false;
@@ -427,22 +541,38 @@ function tierOf(tiers, ach, target) {
   return null;
 }
 
-/** Capaian tiap KPI untuk satu pemilik (AFPS atau RFPM). */
+/**
+ * Capaian tiap KPI untuk satu pemilik (AFPS atau RFPM).
+ * Target skema berlaku per 3 bulan, jadi insentif dihitung per kuartal lalu dijumlahkan.
+ * Bila filter bulan memotong kuartal, insentif tidak dihitung (capaian tetap tampil).
+ */
 function capaian(deals, peran, jumlahAfps) {
-  const hitung = S.kuartal !== 'ALL';
-  const hasil = { hitung, total: deals.length, insentif: 0 };
+  const kuartals = kuartalAktif();
+  const hitung = bulanPenuh();
+  const hasil = { hitung, total: deals.length, insentif: 0, kuartals };
   for (const k of kpiOtomatis()) {
     const c = k[peran];
-    const ach = deals.filter((d) => d.kpi === k.id).length;
-    let target = 0;
+    let targetPerKuartal = 0;
     if (c) {
-      target = peran === 'afps'
+      targetPerKuartal = peran === 'afps'
         ? (c.target || 0) * (jumlahAfps || 1)
         : (c.target != null ? c.target : (c.target_per_afps || 0) * (jumlahAfps || 0));
     }
-    const t = hitung && target > 0 ? tierOf(c.tiers, ach, target) : null;
-    hasil[k.id] = { ach, target, tier: t, tiers: c ? c.tiers : [], insentif: t ? t.insentif : 0 };
-    hasil.insentif += t ? t.insentif : 0;
+    const milik = deals.filter((d) => d.kpi === k.id);
+    let ach = 0, insentif = 0, tierTunggal = null;
+    kuartals.forEach((q) => {
+      const n = milik.filter((d) => d.kuartal === q).length;
+      ach += n;
+      if (!hitung || !targetPerKuartal) return;
+      const t = tierOf(c.tiers, n, targetPerKuartal);
+      if (t) insentif += t.insentif;
+      if (kuartals.length === 1) tierTunggal = t;
+    });
+    const target = targetPerKuartal * kuartals.length;
+    const tier = kuartals.length === 1 ? tierTunggal
+      : (hitung && target ? tierOf(c.tiers, ach, target) : null);   // lebih dari satu kuartal: indikatif
+    hasil[k.id] = { ach, target, tier, tiers: c ? c.tiers : [], insentif };
+    hasil.insentif += insentif;
   }
   hasil.lainnya = { ach: deals.filter((d) => d.kpi === 'lainnya').length, target: 0, tier: null, tiers: [] };
   return hasil;
@@ -455,9 +585,12 @@ function selKpi(c, hitung) {
   return `<span class="dot ${kelas}" title="${judul}"></span>${int(c.ach)} <span class="muted">/ ${int(c.target)}</span>`;
 }
 function labelKuartal() {
-  if (S.kuartal === 'ALL') return 'semua kuartal';
-  const q = S.cfg.kuartal.find((x) => x.id === S.kuartal);
-  return q ? `${q.label} (${q.rentang})` : S.kuartal;
+  const k = kuartalAktif();
+  const nama = (id) => { const q = S.cfg.kuartal.find((x) => x.id === id); return q ? q.label : id.replace('-Q', ' Q'); };
+  let t = !S.kuartal.length ? `semua kuartal (${k.length})`
+    : (k.length === 1 ? nama(k[0]) : k.map(nama).join(' + '));
+  if (S.bulan.length) t += ' — ' + S.bulan.slice().sort().map(labelBulan).join(', ');
+  return t;
 }
 
 /* ---------------------------------------------------------------- render */
@@ -471,6 +604,15 @@ function render() {
   ].filter(Boolean).join('<br>');
   $('#footer-meta').innerHTML = `Sumber: <strong>${esc(m.file_sumber)}</strong> — sheet EXT ${int(m.ringkas.ext_total)} baris kontrak (${int(m.ringkas.ext_deal)} deal perpanjangan), sheet NOO ${int(m.ringkas.noo_total)} baris target (${int(m.ringkas.noo_deal_ap)} sudah deal/ber-AP). ${esc(S.cfg.catatan_sumber || '')}`;
 
+  const bagian = [];
+  bagian.push(!S.kuartal.length ? 'semua kuartal' : (S.kuartal.length === 1 ? labelKuartalId(S.kuartal[0]).split(' · ')[0] : S.kuartal.slice().sort().map((q) => labelKuartalId(q).split(' · ')[0]).join(' + ')));
+  if (S.bulan.length) bagian.push('bulan ' + S.bulan.slice().sort().map(labelBulan).join(', '));
+  if (S.region.length) bagian.push(S.region.length === 1 ? S.region[0] : `${S.region.length} region (${S.region.join(', ')})`);
+  if (S.afps.length) bagian.push(S.afps.length === 1 ? S.afps[0] : `${S.afps.length} AFPS`);
+  if (S.sumber.length === 1) bagian.push(S.sumber[0] === 'NOO' ? 'NOO ber-AP saja' : 'perpanjangan saja');
+  if (S.cari) bagian.push(`pencarian “${S.cari}”`);
+  $('#ringkas-filter').innerHTML = `Filter aktif: <strong>${esc(bagian.join(' · '))}</strong> — <strong>${int(terpilih().length)}</strong> outlet`;
+
   if (S.view === 'insentif') renderInsentif();
   if (S.view === 'detail') renderDetail();
   if (S.view === 'skema') renderSkema();
@@ -481,25 +623,28 @@ function renderInsentif() {
   const d = terpilih();
   const perp = d.filter((x) => x.sumber === 'PERPANJANGAN').length;
   const noo = d.length - perp;
-  const lingkup = S.afps ? S.data.afps.filter((a) => a.nama === S.afps)
-    : S.data.afps.filter((a) => !S.region || a.region === S.region);
+  const lingkup = S.data.afps.filter((a) => (!S.region.length || S.region.includes(a.region))
+    && (!S.afps.length || S.afps.includes(a.nama)));
   const perAfps = lingkup.map((a) => capaian(d.filter((x) => x.afps === a.nama), 'afps'));
   const totalInsentif = perAfps.reduce((s, c) => s + c.insentif, 0);
-  const maks = kpiOtomatis().reduce((s, k) => s + k.afps.tiers[0].insentif, 0) * lingkup.length;
   const c = capaian(d, 'afps', lingkup.length);
+  const maks = kpiOtomatis().reduce((s, k) => s + k.afps.tiers[0].insentif, 0) * lingkup.length * c.kuartals.length;
 
   $('#tiles').innerHTML = [
     { ic: '🏪', bg: 'bg-biru', num: int(d.length), lbl: 'Total outlet deal', sub: labelKuartal() },
     { ic: '🔁', bg: 'bg-hijau', num: int(perp), lbl: 'Perpanjangan kontrak', sub: 'sheet EXT — status DEAL' },
     { ic: '🆕', bg: 'bg-oranye', num: int(noo), lbl: 'NOO menjadi AP', sub: 'sheet NOO — nomor AP terbit' },
     {
-      ic: '💰', bg: 'bg-ungu', num: S.kuartal === 'ALL' ? '—' : rpPendek(totalInsentif), lbl: 'Estimasi insentif AFPS',
-      sub: S.kuartal === 'ALL' ? 'pilih satu kuartal' : `dari maks ${rpPendek(maks)} · ${lingkup.length} AFPS`,
+      ic: '💰', bg: 'bg-ungu', num: c.hitung ? rpPendek(totalInsentif) : '—', lbl: 'Estimasi insentif AFPS',
+      sub: c.hitung ? `dari maks ${rpPendek(maks)} · ${lingkup.length} AFPS · ${c.kuartals.length} kuartal`
+        : 'filter bulan memotong kuartal',
     },
   ].map((t) => `<div class="kpi-solid ${t.bg}"><div class="ic">${t.ic}</div>
       <div class="num">${t.num}</div><div class="lbl">${esc(t.lbl)}</div><div class="sub2">${esc(t.sub)}</div></div>`).join('');
 
-  $('#kpi-hint').textContent = `${S.afps || S.region || S.data.meta.grfpm || 'Semua'} — ${labelKuartal()}. Target agregat = target per AFPS × ${lingkup.length} AFPS.`;
+  const cakupan = S.afps.length === 1 ? S.afps[0] : (S.region.length === 1 ? S.region[0] : (S.data.meta.grfpm || 'Semua'));
+  $('#kpi-hint').textContent = `${cakupan} — ${labelKuartal()}. Target agregat = target per AFPS × ${lingkup.length} AFPS`
+    + (c.kuartals.length > 1 ? ` × ${c.kuartals.length} kuartal.` : '.');
   $('#kpi-cards').innerHTML = kpiOtomatis().map((k) => {
     const ach = c[k.id].ach, target = c[k.id].target;
     const p = target ? Math.min(ach / target, 1) : 0;
@@ -513,13 +658,16 @@ function renderInsentif() {
       <div class="ket2">${esc(k.kontrak)}</div>
     </div>`;
   }).join('');
-  $('#kpi-note').innerHTML = S.kuartal === 'ALL'
-    ? 'Insentif tidak dihitung untuk “semua kuartal” karena target skema berlaku per 3 bulan. Pilih satu kuartal untuk melihat estimasinya.'
-    : `Perpanjangan dan NOO digabung per channel sesuai ketentuan skema.${c.lainnya.ach ? ` <strong>${int(c.lainnya.ach)}</strong> deal channel DTW/POI, Sport, dan Rest Area ditampilkan tetapi tidak masuk KPI.` : ''}`;
+  const catatanKpi = [`Perpanjangan dan NOO digabung per channel sesuai ketentuan skema.`];
+  if (c.lainnya.ach) catatanKpi.push(`<strong>${int(c.lainnya.ach)}</strong> deal channel DTW/POI, Sport, dan Rest Area ditampilkan tetapi tidak masuk KPI.`);
+  if (!c.hitung) catatanKpi.push('<strong>Insentif tidak dihitung</strong> karena filter bulan memotong kuartal — target skema berlaku per 3 bulan penuh. Kosongkan filter bulan untuk melihat estimasi insentif.');
+  else if (c.kuartals.length > 1) catatanKpi.push(`Insentif dihitung <strong>per kuartal lalu dijumlahkan</strong> (${c.kuartals.length} kuartal). Titik warna pada tabel bersifat indikatif atas gabungan kuartal.`);
+  $('#kpi-note').innerHTML = catatanKpi.join(' ');
 
   // ---- tabel per AFPS
   const rowsA = barisAfps(d);
-  $('#afps-hint').textContent = 'Target per AFPS: ' + kpiOtomatis().map((k) => `${k.nama_pendek} ${k.afps.target}`).join(' · ');
+  $('#afps-hint').textContent = `Target per AFPS per kuartal: ` + kpiOtomatis().map((k) => `${k.nama_pendek} ${k.afps.target}`).join(' · ')
+    + (c.kuartals.length > 1 ? ` — kolom target sudah dikali ${c.kuartals.length} kuartal.` : '.');
   $('#afps-count').textContent = `${rowsA.length} AFPS`;
   const kolsA = [
     { k: 'nama', t: 'AFPS', teks: 1, v: (r) => esc(r.nama) },
@@ -542,13 +690,13 @@ function renderInsentif() {
     },
   };
   tabel($('#t-afps'), kolsA, urut(rowsA, 'afps'), 'afps', totA);
-  $('#legend-tier').innerHTML = S.kuartal === 'ALL' ? '<span class="muted">Pilih satu kuartal untuk melihat tier dan estimasi insentif.</span>'
+  $('#legend-tier').innerHTML = !c.hitung ? '<span class="muted">Kosongkan filter bulan untuk melihat tier dan estimasi insentif.</span>'
     : ['<span><i class="dot d100" style="border-radius:50%"></i>≥100%</span>', '<span><i class="dot d85" style="border-radius:50%"></i>≥85%</span>',
        '<span><i class="dot d75" style="border-radius:50%"></i>≥75%</span>', '<span><i class="dot d0" style="border-radius:50%"></i>di bawah 75% — tanpa insentif</span>'].join('');
 
   // ---- tabel per RFPM
   const rowsR = barisRfpm(d);
-  $('#rfpm-hint').textContent = `Satu region = satu RFPM. Target Kuliner & Lokpen = 15 outlet × jumlah AFPS di region; Foodcourt = 5 outlet per RFPM. Periode: ${labelKuartal()}.`;
+  $('#rfpm-hint').textContent = `Satu region = satu RFPM. Target Kuliner & Lokpen = 15 outlet × jumlah AFPS di region per kuartal; Foodcourt = 5 outlet per RFPM per kuartal. Periode: ${labelKuartal()}.`;
   $('#rfpm-count').textContent = `${rowsR.length} region`;
   tabel($('#t-rfpm'), [
     { k: 'nama', t: 'RFPM / Region', teks: 1, v: (r) => esc(r.nama) },
@@ -571,7 +719,7 @@ function renderInsentif() {
 
 function barisAfps(d) {
   return S.data.afps
-    .filter((a) => (!S.region || a.region === S.region) && (!S.afps || a.nama === S.afps))
+    .filter((a) => (!S.region.length || S.region.includes(a.region)) && (!S.afps.length || S.afps.includes(a.nama)))
     .map((a) => {
       const milik = d.filter((x) => x.afps === a.nama);
       return {
@@ -583,7 +731,7 @@ function barisAfps(d) {
     });
 }
 function barisRfpm(d) {
-  return S.data.region.filter((r) => !S.region || r.nama === S.region).map((r) => {
+  return S.data.region.filter((r) => !S.region.length || S.region.includes(r.nama)).map((r) => {
     const milik = d.filter((x) => x.region === r.nama);
     return {
       nama: r.nama, jumlah_afps: r.jumlah_afps,
@@ -669,7 +817,8 @@ function renderSkema() {
 }
 
 function renderCatatan() {
-  const rows = urut(S.data.issues.filter((i) => (!S.region || i.region === S.region) && (!S.afps || i.afps === S.afps)), 'catatan');
+  const rows = urut(S.data.issues.filter((i) => (!S.region.length || S.region.includes(i.region))
+    && (!S.afps.length || S.afps.includes(i.afps))), 'catatan');
   $('#catatan-count').textContent = `${int(rows.length)} baris perlu diperiksa`;
   tabel($('#t-catatan'), [
     { k: 'sheet', t: 'Sheet', v: (r) => esc(r.sheet) },
@@ -748,7 +897,8 @@ function unduhCsv(jenis) {
     const t = String(v ?? '');
     return /[";\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
   }).join(';')).join('\r\n');
-  unduhBerkas('﻿' + csv, `${nama}-${S.kuartal}-W${S.data.meta.week || 'x'}.csv`, 'text/csv;charset=utf-8');
+  const periode = (S.kuartal.length ? S.kuartal.slice().sort().join('_') : 'semua') + (S.bulan.length ? '-' + S.bulan.slice().sort().join('_') : '');
+  unduhBerkas('﻿' + csv, `${nama}-${periode}-W${S.data.meta.week || 'x'}.csv`, 'text/csv;charset=utf-8');
 }
 
 /** Satu berkas HTML mandiri berisi data saat ini — untuk dibagikan/arsip. */
@@ -811,12 +961,15 @@ function skalaAtas(maks) {
   const p = Math.pow(10, Math.floor(Math.log10(maks)));
   return Math.ceil(maks / (p / 2)) * (p / 2);
 }
-const seriAktif = (nama) => !S.sumber || (S.sumber === 'NOO' ? nama.startsWith('NOO') : nama.startsWith('Perpanjangan'));
+const seriAktif = (nama) => !S.sumber.length || S.sumber.includes(nama.startsWith('NOO') ? 'NOO' : 'PERPANJANGAN');
 
 /** Deal per kuartal — batang berkelompok, dua seri, berlabel langsung. */
 function chartKuartal() {
+  const bulan = S.bulan.length ? new Set(S.bulan) : null;
   const semua = S.data.deals.filter((d) => d.valid
-    && (!S.region || d.region === S.region) && (!S.afps || d.afps === S.afps) && (!S.sumber || d.sumber === S.sumber)
+    && (!S.region.length || S.region.includes(d.region)) && (!S.afps.length || S.afps.includes(d.afps))
+    && (!S.sumber.length || S.sumber.includes(d.sumber))
+    && (!bulan || bulan.has((d.tgl_deal || '').slice(0, 7)))
     && (!S.cari || `${d.outlet} ${d.afps} ${d.kota} ${d.ap}`.toUpperCase().includes(S.cari)));
   const qs = S.cfg.kuartal.filter((q) => semua.some((d) => d.kuartal === q.id));
   if (!qs.length) return kosong('#chart-kuartal', 'Belum ada deal dengan tanggal valid.');
@@ -838,7 +991,7 @@ function chartKuartal() {
   }
   qs.forEach((q, i) => {
     const x0 = l + band * i + (band - (lebar + 2) * seri.length) / 2;
-    const aktif = q.id === S.kuartal;
+    const aktif = S.kuartal.includes(q.id);
     g += `<text x="${l + band * i + band / 2}" y="${H - 12}" text-anchor="middle" font-size="11.5"
            fill="${aktif ? '#161721' : '#6C6D82'}" font-weight="${aktif ? 800 : 500}">${esc(q.label)}</text>`;
     seri.forEach((s, j) => {

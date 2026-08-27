@@ -47,31 +47,32 @@
       <div class="card">
         <div class="filters">
           <div class="field">
-            <label class="lbl" for="f-kuartal">Kuartal</label>
-            <select id="f-kuartal"></select>
+            <label class="lbl">Kuartal</label>
+            <div id="f-kuartal"></div>
           </div>
           <div class="field">
-            <label class="lbl" for="f-region">RFPM / Region</label>
-            <select id="f-region"><option value="">Semua</option></select>
+            <label class="lbl">Bulan</label>
+            <div id="f-bulan"></div>
           </div>
           <div class="field">
-            <label class="lbl" for="f-afps">AFPS</label>
-            <select id="f-afps"><option value="">Semua</option></select>
+            <label class="lbl">RFPM / Region</label>
+            <div id="f-region"></div>
           </div>
           <div class="field">
-            <label class="lbl" for="f-sumber">Sumber</label>
-            <select id="f-sumber">
-              <option value="">Perpanjangan + NOO</option>
-              <option value="PERPANJANGAN">Perpanjangan</option>
-              <option value="NOO">NOO ber-AP</option>
-            </select>
+            <label class="lbl">AFPS</label>
+            <div id="f-afps"></div>
           </div>
-          <div class="field" style="flex:2 1 200px">
+          <div class="field">
+            <label class="lbl">Sumber</label>
+            <div id="f-sumber"></div>
+          </div>
+          <div class="field" style="flex:1.6 1 190px">
             <label class="lbl" for="f-cari">Cari outlet / AP / kota</label>
             <input type="search" id="f-cari" placeholder="mis. BAKSO, BEV/SUN/26…" autocomplete="off">
           </div>
           <button class="btn" id="reset" type="button">Reset filter</button>
         </div>
+        <div id="ringkas-filter" class="count" style="margin-top:10px"></div>
       </div>
 
       <!-- ============ INSENTIF ============ -->
